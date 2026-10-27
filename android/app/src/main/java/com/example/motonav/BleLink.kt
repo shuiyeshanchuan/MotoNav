@@ -566,12 +566,24 @@ object BleLink {
         finishOta(false, "已取消 OTA")
     }
 
+    fun otaBlockReason(): String? {
+        val missing = mutableListOf<String>()
+        if (!ready) missing += "蓝牙通道未就绪"
+        if (!verified) missing += "配对验证未完成"
+        if (!screenOtaReady) missing += "设备未报告 OTA 协议"
+        if (screenProtocol != 1) missing += "协议版本不是 v1"
+        if (!screenOtaPower) missing += "电源条件不满足"
+        if (otaRxChar == null || otaTxChar == null) missing += "OTA 蓝牙通道未订阅"
+        if (otaInProgress) missing += "已有 OTA 正在进行"
+        return missing.takeIf { it.isNotEmpty() }?.joinToString("、")
+    }
+
     fun startOta(board: String, version: String, image: ByteArray, sha256: String,
                  signatureAlgorithm: String, signatureKeyId: String, signatureBase64: String,
                  listener: OtaListener): Boolean {
-        if (!ready || !verified || !screenOtaReady || screenProtocol != 1 || !screenOtaPower ||
-            otaRxChar == null || otaTxChar == null || otaInProgress || image.isEmpty()) {
-            listener.onFinished(false, "设备未满足 OTA 条件（需完成配对、协议 v1、稳定电源和 OTA 通道）")
+        val blockReason = otaBlockReason()
+        if (blockReason != null || image.isEmpty()) {
+            listener.onFinished(false, blockReason?.let { "设备未满足 OTA 条件：$it" } ?: "OTA 镜像为空")
             return false
         }
         if (screenBoard.isNotBlank() && screenBoard != board) { listener.onFinished(false, "板型不匹配：设备 ${screenBoard}，文件 $board"); return false }

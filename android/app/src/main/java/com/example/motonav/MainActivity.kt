@@ -1167,6 +1167,8 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     val current = BleLink.screenFirmware
                     when {
+                        current.isBlank() || !Regex("""^v\d+\.\d+\.\d+(?:[-._][A-Za-z0-9._-]+)?$""").matches(current) ->
+                            onlineOtaStatusView?.text = "还没有读到圆屏完整固件版本，请等待“设备”诊断信息完整后再检查"
                         candidate.version == current -> onlineOtaStatusView?.text = "已是最新稳定版：$current"
                         !FirmwareUpdateClient.isNotOlder(candidate.version, current) ->
                             onlineOtaStatusView?.text = "当前圆屏版本 $current 比 GitHub 稳定版更新，不降级"
@@ -1210,6 +1212,7 @@ class MainActivity : AppCompatActivity() {
         onlineOtaStatusView?.text = "正在下载并校验 ${candidate.version}…"
         Thread {
             try {
+                BleLink.otaBlockReason()?.let { error("设备暂不可升级：$it") }
                 val pkg = FirmwareUpdateClient.downloadPackage(candidate) { text ->
                     runOnUiThread { onlineOtaStatusView?.text = text }
                 }
