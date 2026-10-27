@@ -44,8 +44,8 @@ android {
             .get()
         minSdk = 26
         targetSdk = 35
-        versionCode = 136
-        versionName = "8.3.33"
+        versionCode = 137
+        versionName = "8.3.34"
         ndk { abiFilters += setOf("arm64-v8a") }
     }
 

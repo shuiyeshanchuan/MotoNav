@@ -18,9 +18,9 @@ unsigned long callAnswerAt = 0;
 String pendingProf = "";             // v5.8 分步用时
 String pendingEvt = "";              // 待发给手机的触摸事件
 
-// 1.75C PWR key: show a software menu after 3 seconds. The PMIC still has its
+// 1.75C PWR key: show a software menu after 2 seconds. The PMIC still has its
 // hardware long-press cutoff, so the user must release PWR before tapping.
-#define PWR_HOLD_MENU_MS 3000UL
+#define PWR_HOLD_MENU_MS 2000UL
 bool powerButtonDown = false;
 unsigned long powerButtonAt = 0;
 bool powerMenuOn = false;
@@ -117,12 +117,8 @@ void touchPoll() {
       const bool tap = abs(touchX1 - touchX0) < 36 && abs(touchY1 - touchY0) < 36;
       const int x0 = touchX0, y0 = touchY0;
       touchDown = false;
+      // Touch X is mirrored on this panel: visual left reports the right range.
       if (tap && y0 >= 190 && y0 < 294 && x0 >= 38 && x0 < 222) {
-        powerMenuOn = false;
-        powerButtonDown = false;
-        idlePowerOffShutdown();
-      }
-      if (tap && y0 >= 190 && y0 < 294 && x0 >= 244 && x0 < 428) {
         powerMenuOn = false;
         powerButtonDown = false;
         gfx->fillScreen(C_BLACK);
@@ -131,6 +127,11 @@ void touchPoll() {
         flushSync();
         delay(120);
         ESP.restart();
+      }
+      if (tap && y0 >= 190 && y0 < 294 && x0 >= 244 && x0 < 428) {
+        powerMenuOn = false;
+        powerButtonDown = false;
+        idlePowerOffShutdown();
       }
       if (powerMenuOn && !tap) restoreAfterPowerMenu();
       if (powerMenuOn && tap && !(y0 >= 190 && y0 < 294 &&

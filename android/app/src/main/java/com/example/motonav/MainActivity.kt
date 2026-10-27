@@ -146,7 +146,7 @@ import androidx.appcompat.app.AppCompatActivity
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.33"
+const val APP_VERSION = "v8.3.34"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（罪恶都市夜景：深紫黑底、霓虹粉、青色） ----------------
@@ -1299,43 +1299,26 @@ class MainActivity : AppCompatActivity() {
             }
         })
 
-    private fun waitForOtaReboot(expectedVersion: String, attempt: Int = 0) {
+    private fun waitForOtaReboot(expectedVersion: String, attempt: Int = 0, connectedAttempt: Int = 0) {
         if (otaVerificationVersion != expectedVersion) return
-        if (BleLink.isConnected && BleLink.verified && BleLink.screenFirmware == expectedVersion) {
-            onlineOtaStatusView?.text = "圆屏已重新连接，正在确认 GitHub 稳定版…"
-            Thread {
-                try {
-                    val latest = FirmwareUpdateClient.check(BleLink.screenBoard)
-                    runOnUiThread {
-                        if (otaVerificationVersion != expectedVersion) return@runOnUiThread
-                        otaVerificationVersion = null
-                        onlineOtaBusy = false
-                        onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
-                        if (latest.version == expectedVersion) {
-                            onlineOtaCandidate = null
-                            onlineOtaUpdateButton?.visibility = View.GONE
-                            onlineOtaStatusView?.text = "更新完成：圆屏已重启并重新连接，当前已是最新稳定版 $expectedVersion"
-                        } else {
-                            onlineOtaCandidate = latest
-                            onlineOtaUpdateButton?.apply {
-                                text = "更新至 ${latest.version}"
-                                visibility = View.VISIBLE
-                                isEnabled = true
-                                alpha = 1f
-                            }
-                            onlineOtaStatusView?.text = "更新完成：当前圆屏版本 $expectedVersion；发现新的稳定版 ${latest.version}"
-                        }
-                    }
-                } catch (e: Exception) {
-                    runOnUiThread {
-                        if (otaVerificationVersion != expectedVersion) return@runOnUiThread
-                        otaVerificationVersion = null
-                        onlineOtaBusy = false
-                        onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
-                        onlineOtaStatusView?.text = "圆屏已重启并连接，当前版本已确认为 $expectedVersion；稳定版检查失败，可稍后重试"
-                    }
-                }
-            }.start()
+        if (BleLink.isConnected && BleLink.verified) {
+            // BLE can become ready before INFO/FW notifications arrive. Refresh
+            // diagnostics as soon as it returns and use a short version-read wait.
+            if (attempt % 3 == 0) BleLink.refreshDeviceStatus()
+            if (BleLink.screenFirmware == expectedVersion) {
+                confirmOtaReboot(expectedVersion)
+                return
+            }
+            if (connectedAttempt >= 10) {
+                otaVerificationVersion = null
+                onlineOtaBusy = false
+                onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+                onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
+                onlineOtaStatusView?.text = "圆屏已连接，但暂未读到更新后的版本；请稍后点“检查稳定版更新”确认"
+                return
+            }
+            onlineOtaStatusView?.text = "圆屏已连接，正在读取更新后的版本…（${connectedAttempt + 1}/10）"
+            handler.postDelayed({ waitForOtaReboot(expectedVersion, attempt + 1, connectedAttempt + 1) }, 1000)
             return
         }
         if (attempt >= 60) {
@@ -1347,7 +1330,44 @@ class MainActivity : AppCompatActivity() {
             return
         }
         onlineOtaStatusView?.text = "圆屏正在重启，等待重新连接…（${attempt + 1}/60）"
-        handler.postDelayed({ waitForOtaReboot(expectedVersion, attempt + 1) }, 1000)
+        handler.postDelayed({ waitForOtaReboot(expectedVersion, attempt + 1, 0) }, 1000)
+    }
+
+    private fun confirmOtaReboot(expectedVersion: String) {
+        onlineOtaStatusView?.text = "圆屏已重新连接，正在确认 GitHub 稳定版…"
+        Thread {
+            try {
+                val latest = FirmwareUpdateClient.check(BleLink.screenBoard)
+                runOnUiThread {
+                    if (otaVerificationVersion != expectedVersion) return@runOnUiThread
+                    otaVerificationVersion = null
+                    onlineOtaBusy = false
+                    onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+                    if (latest.version == expectedVersion) {
+                        onlineOtaCandidate = null
+                        onlineOtaUpdateButton?.visibility = View.GONE
+                        onlineOtaStatusView?.text = "更新完成：圆屏已重启并重新连接，当前已是最新稳定版 $expectedVersion"
+                    } else {
+                        onlineOtaCandidate = latest
+                        onlineOtaUpdateButton?.apply {
+                            text = "更新至 ${latest.version}"
+                            visibility = View.VISIBLE
+                            isEnabled = true
+                            alpha = 1f
+                        }
+                        onlineOtaStatusView?.text = "更新完成：当前圆屏版本 $expectedVersion；发现新的稳定版 ${latest.version}"
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    if (otaVerificationVersion != expectedVersion) return@runOnUiThread
+                    otaVerificationVersion = null
+                    onlineOtaBusy = false
+                    onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+                    onlineOtaStatusView?.text = "圆屏已重启并连接，当前版本已确认为 $expectedVersion；稳定版检查失败，可稍后重试"
+                }
+            }
+        }.start()
     }
 
     /** v6.2 Key 设置：显示两个 key 填没填，点「填写 / 修改」弹出填写页 */
