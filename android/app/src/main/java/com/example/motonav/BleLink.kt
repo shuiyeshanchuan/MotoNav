@@ -152,6 +152,7 @@ object BleLink {
     @Volatile var screenFirmware = ""
     @Volatile var screenProtocol = -1
     @Volatile var screenOtaReady = false
+    @Volatile var screenOtaStatusKnown = false
     @Volatile var screenProf = ""                     // v5.8 每帧各步骤用时
     @Volatile var screenFps = ""                      // v2.6 给新界面用：帧率、屏幕速度、快速刷屏
     @Volatile var screenMhz = -1
@@ -363,7 +364,7 @@ object BleLink {
         screenName = ""; screenBattery = ""; screenBatteryPct = -1
         screenBatteryLevel = 0; screenPmuTempC10 = -1; screenVbusMv = 0; screenOtaPower = false
         screenBleStats = ""
-        screenBoard = ""; screenFirmware = ""; screenProtocol = -1; screenOtaReady = false
+        screenBoard = ""; screenFirmware = ""; screenProtocol = -1; screenOtaReady = false; screenOtaStatusKnown = false
         pairHint = ""; staleCount = 0; needUnbond = false
         connect(c)
     }
@@ -403,19 +404,40 @@ object BleLink {
             resendAll()
             sendEvent("#HM,0")
             send("#BLE?")
+            send("#OTA?")
         }
     }
 
     private fun onNotify(bytes: ByteArray?) {
         val msg = bytes?.toString(Charsets.UTF_8)?.trim() ?: return
         if (BleSession.confirms(msg, capabilityQuerySent)) markVerified()
+        if (msg.startsWith("OC,")) {
+            val capabilities = msg.split(',')
+            screenProtocol = capabilities.getOrNull(1)?.toIntOrNull() ?: -1
+            screenOtaReady = capabilities.getOrNull(2) == "1"
+            screenOtaStatusKnown = true
+            trace("device $msg"); return
+        }
+        if (msg.startsWith("FW,")) {
+            screenFirmware = msg.substringAfter("FW,").trim()
+            trace("device $msg"); return
+        }
+        if (msg.startsWith("OP,")) {
+            screenOtaPower = msg.substringAfter("OP,").trim() == "1"
+            trace("device $msg"); return
+        }
         if(msg.startsWith("INFO,")) {
             screenInfo = msg
             val info = msg.split(',')
             screenBoard = info.getOrNull(1).orEmpty()
-            screenFirmware = info.getOrNull(2).orEmpty()
-            screenProtocol = info.getOrNull(3)?.toIntOrNull() ?: -1
-            screenOtaReady = info.getOrNull(5) == "1"
+            val reportedFirmware = info.getOrNull(2).orEmpty()
+            val completeFirmware = Regex("""^v\d+\.\d+\.\d+(?:[-._][A-Za-z0-9._-]+)?$""")
+            if (!completeFirmware.matches(screenFirmware) || completeFirmware.matches(reportedFirmware))
+                screenFirmware = reportedFirmware
+            if (!screenOtaStatusKnown) {
+                screenProtocol = info.getOrNull(3)?.toIntOrNull() ?: -1
+                screenOtaReady = info.getOrNull(5) == "1"
+            }
             trace("device $msg"); return
         }
         if(msg.startsWith("SELFTEST,")) {
@@ -566,12 +588,24 @@ object BleLink {
         finishOta(false, "已取消 OTA")
     }
 
+    /**
+     * v7.12.9-power.14 sent its long INFO response before some phones had
+     * negotiated a larger MTU, leaving exactly "INFO,175C,v7.12.9-po".
+     * This narrow bridge is only for moving that known signed 1.75C baseline
+     * to power.15, which introduces the short OC/FW/OP status protocol.
+     */
+    fun isLegacy175cOtaBaseline(): Boolean =
+        screenBoard == "175C" && screenFirmware == "v7.12.9-po" &&
+            !screenOtaStatusKnown && screenProtocol == -1 && !screenOtaReady &&
+            otaRxChar != null && otaTxChar != null
+
     fun otaBlockReason(): String? {
         val missing = mutableListOf<String>()
+        val legacyBaseline = isLegacy175cOtaBaseline()
         if (!ready) missing += "蓝牙通道未就绪"
         if (!verified) missing += "配对验证未完成"
-        if (!screenOtaReady) missing += "设备未报告 OTA 协议"
-        if (screenProtocol != 1) missing += "协议版本不是 v1"
+        if (!legacyBaseline && !screenOtaReady) missing += "设备未报告 OTA 协议"
+        if (!legacyBaseline && screenProtocol != 1) missing += "协议版本不是 v1"
         if (!screenOtaPower) missing += "电源条件不满足"
         if (otaRxChar == null || otaTxChar == null) missing += "OTA 蓝牙通道未订阅"
         if (otaInProgress) missing += "已有 OTA 正在进行"
@@ -624,7 +658,7 @@ object BleLink {
                 screenBattery = ""; screenBatteryPct = -1
                 screenBatteryLevel = 0; screenPmuTempC10 = -1; screenVbusMv = 0; screenOtaPower = false
                 screenBleStats = ""
-                screenBoard = ""; screenFirmware = ""; screenProtocol = -1; screenOtaReady = false
+                screenBoard = ""; screenFirmware = ""; screenProtocol = -1; screenOtaReady = false; screenOtaStatusKnown = false
                 status = "蓝牙已连接，正在读取圆屏服务…"
                 try {
                     g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
@@ -750,6 +784,7 @@ object BleLink {
         capabilityQuerySent = true
         send("#GB?")
         send("#INFO?")
+        send("#OTA?")
         if (verified) resendAll()
     }
 
@@ -804,6 +839,7 @@ object BleLink {
     private fun keyOf(msg: String): String = when {
         msg == "#GB?" -> "#GB?"
         msg == "#INFO?" -> "#INFO?"
+        msg == "#OTA?" -> "#OTA?"
         msg == "#BLE?" -> "#BLE?"
         msg.startsWith("#OTA,") -> "#OTA"
         // v6.3 "#D角度"、v7.2 "#L毫秒" 这类没有逗号的：按前两个字符算同一类（只留最新的）
@@ -825,7 +861,7 @@ object BleLink {
                 lastImg.clear()
                 queue.removeAll { it.key != null && it.key.startsWith("B") }
             }
-            if (k != "P" && k != "#GB?" && k != "#INFO?" && k != "#BLE?" && k != "#OTA") lastState[k] = msg
+            if (k != "P" && k != "#GB?" && k != "#INFO?" && k != "#OTA?" && k != "#BLE?" && k != "#OTA") lastState[k] = msg
             enqueue(k, msg.toByteArray(Charsets.UTF_8))
         }
         pump()

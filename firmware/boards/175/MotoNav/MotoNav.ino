@@ -1,5 +1,5 @@
 // MotoNav 1.75：程序入口与运行调度。
-// v7.12.9-power.14：1.75C 电源诊断、BLE 可靠性和 BLE OTA 基础设施。
+// v7.12.9-power.15：1.75C 电源诊断、BLE 可靠性和 BLE OTA 基础设施。
 // 文件职责、依赖和验证结果见工程目录的“源码结构说明.txt”。
 // 实现头文件只由此入口包含，保持原编译顺序和内联优化。
 #include "src/core/FirmwareConfig.h"

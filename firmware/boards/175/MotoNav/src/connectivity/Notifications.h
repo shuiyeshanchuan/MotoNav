@@ -30,6 +30,18 @@ void sendPendingAck() {
   if (pendingBuildingCapability) {
     txChar->setValue((uint8_t *)"CAP,BLD,1", 9); txChar->notify(); pendingBuildingCapability=false;
   }
+  if (pendingOtaCapabilities.length()) {
+    txChar->setValue((uint8_t *)pendingOtaCapabilities.c_str(), pendingOtaCapabilities.length());
+    txChar->notify(); pendingOtaCapabilities = "";
+  }
+  if (pendingFirmwareVersion.length()) {
+    txChar->setValue((uint8_t *)pendingFirmwareVersion.c_str(), pendingFirmwareVersion.length());
+    txChar->notify(); pendingFirmwareVersion = "";
+  }
+  if (pendingOtaPower.length()) {
+    txChar->setValue((uint8_t *)pendingOtaPower.c_str(), pendingOtaPower.length());
+    txChar->notify(); pendingOtaPower = "";
+  }
   if (pendingDeviceInfo.length()) {
     txChar->setValue((uint8_t *)pendingDeviceInfo.c_str(), pendingDeviceInfo.length());
     txChar->notify();

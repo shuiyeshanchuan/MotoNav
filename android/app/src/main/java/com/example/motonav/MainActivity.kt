@@ -146,7 +146,7 @@ import androidx.appcompat.app.AppCompatActivity
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.30"
+const val APP_VERSION = "v8.3.31"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（罪恶都市夜景：深紫黑底、霓虹粉、青色） ----------------
@@ -1166,7 +1166,17 @@ class MainActivity : AppCompatActivity() {
                 val candidate = FirmwareUpdateClient.check(board)
                 runOnUiThread {
                     val current = BleLink.screenFirmware
+                    val legacyBridge = BleLink.isLegacy175cOtaBaseline()
                     when {
+                        legacyBridge && candidate.version == "v7.12.9-power.15" -> {
+                            onlineOtaCandidate = candidate
+                            onlineOtaStatusView?.text = buildString {
+                                append("发现稳定版 ${candidate.version}（当前 .14 兼容升级）")
+                                append("\n\n本次升级会修复旧固件的 OTA 状态上报；完成后，后续更新可直接一键进行。")
+                                if (candidate.notes.isNotBlank()) append("\n\n").append(candidate.notes)
+                            }
+                            onlineOtaUpdateButton?.apply { text = "更新至 ${candidate.version}"; visibility = View.VISIBLE }
+                        }
                         current.isBlank() || !Regex("""^v\d+\.\d+\.\d+(?:[-._][A-Za-z0-9._-]+)?$""").matches(current) ->
                             onlineOtaStatusView?.text = "还没有读到圆屏完整固件版本，请等待“设备”诊断信息完整后再检查"
                         candidate.version == current -> onlineOtaStatusView?.text = "已是最新稳定版：$current"

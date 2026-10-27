@@ -102,6 +102,7 @@ void handleText(const String &m) {
   if (m == "#AMS?") { appleMedia.resend(); return; }
   if (m == "#GB?") { pendingBuildingCapability=true; return; }
   if (m == "#INFO?") { queueDeviceInfo(); queueDeviceSelfTest(); return; }
+  if (m == "#OTA?") { queueOtaStatus(); return; }
   if (m == "#BLE?") { queueBleStatus(); return; }
   if (m.startsWith("#ZACK,")) {
     if (hidMusicMode) return;

@@ -3,6 +3,9 @@
 
 String pendingDeviceInfo = "";
 String pendingDeviceSelfTest = "";
+String pendingOtaCapabilities = "";
+String pendingFirmwareVersion = "";
+String pendingOtaPower = "";
 bool deviceScreenOK = false;
 bool deviceTouchOK = false;
 bool devicePmuOK = false;
@@ -40,6 +43,16 @@ void queueDeviceSelfTest() {
       String(batPct) + "," + String(batteryLevel) + "," + String(batChg ? 1 : 0) + "," +
       String(usbIn ? 1 : 0) + "," + String(batMv) + "," + String(pmuTempC10) + "," +
       String(vbusMv) + "," + String(powerAllowsOta() ? 1 : 0);
+}
+
+// Keep OTA status packets below the 20-byte BLE fallback MTU used by older
+// Android connections. INFO and SELFTEST remain useful diagnostics, but can
+// be truncated before MTU negotiation completes.
+void queueOtaStatus() {
+  pendingOtaCapabilities = String("OC,") + String(OTA_PROTOCOL_VERSION) + "," +
+      String(MOTONAV_OTA_READY);
+  pendingFirmwareVersion = String("FW,") + FW_VERSION;
+  pendingOtaPower = String("OP,") + String(powerAllowsOta() ? 1 : 0);
 }
 
 void printDeviceDiagnosticsSerial() {
