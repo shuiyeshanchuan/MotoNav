@@ -1,16 +1,17 @@
 // MotoNav 1.75：程序入口与运行调度。
-// v7.12.9-junction.10：保留独立卡片框架；缺少右转数据改为灰色箭头和灰色实心圆。
+// v7.12.9-power.14：1.75C 电源诊断、BLE 可靠性和 BLE OTA 基础设施。
 // 文件职责、依赖和验证结果见工程目录的“源码结构说明.txt”。
 // 实现头文件只由此入口包含，保持原编译顺序和内联优化。
 #include "src/core/FirmwareConfig.h"
 #include <Arduino.h>
 #include "src/core/DeviceContext.h"
 #include "src/core/FunctionDeclarations.h"
+#include "src/power/Battery.h"
+#include "src/ota/BleOta.h"
 #include "src/connectivity/Bluetooth.h"
 #include "src/display/DisplayPipeline.h"
 #include "src/graphics/VectorDrawing.h"
 #include "src/graphics/ProgressRings.h"
-#include "src/power/Battery.h"
 #include "src/graphics/StatusWidgets.h"
 #include "src/graphics/LaneDrawing.h"
 #include "src/graphics/TextBitmaps.h"
@@ -40,6 +41,7 @@
 #include "src/protocol/CommandReceiver.h"
 #include "src/connectivity/DeviceName.h"
 #include "src/diagnostics/RenderBenchmarks.h"
+#include "src/diagnostics/DeviceDiagnostics.h"
 
 // 初始化：硬件、画布、持久化设置及蓝牙服务。
 void setup() {
@@ -48,9 +50,12 @@ void setup() {
   Serial.setTxTimeoutMs(0);   // 没打开串口监视器时打印不等待（v1.2 的修复）
   Serial.printf("Reset reason=%d, sleep wake=%d\n", (int)esp_reset_reason(),
                 (int)esp_sleep_get_wakeup_cause());
+  esp_ota_mark_app_valid_cancel_rollback();
   Wire.begin(IIC_SDA, IIC_SCL);
   touchInit();                                         // v5.2 触摸屏
+  deviceTouchOK = touchOK;
   batInit();                                           // v6.8 电源芯片（电量）
+  devicePmuOK = pmuOK;
 
   // v2.3 读取保存的屏幕数据线速度（默认 40MHz，和官方示例一样）
   {
@@ -65,7 +70,8 @@ void setup() {
     pr.end();
     if (qspiMHz != 40 && qspiMHz != 60 && qspiMHz != 80) qspiMHz = 40;
   }
-  if (!gfx->begin(qspiMHz * 1000000)) Serial.println("gfx->begin() failed!");
+  deviceScreenOK = gfx->begin(qspiMHz * 1000000);
+  if (!deviceScreenOK) Serial.println("gfx->begin() failed!");
   panel->setBrightness(200);
 
   iconBuf = (uint16_t *)ps_malloc(ICON_BUF_W * ICON_BUF_H * 2);   // v1.8.1 图标缓存
@@ -130,6 +136,15 @@ void setup() {
   rx->setCallbacks(new RxCB());
   txChar = svc->createCharacteristic(TX_UUID, BLECharacteristic::PROPERTY_NOTIFY);   // v2.0
   txChar->addDescriptor(new BLE2902());
+  otaRxChar = svc->createCharacteristic(
+    OTA_RX_UUID, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR
+#if defined(CONFIG_NIMBLE_ENABLED)
+             | BLECharacteristic::PROPERTY_WRITE_ENC | BLECharacteristic::PROPERTY_WRITE_AUTHEN
+#endif
+  );
+  otaRxChar->setCallbacks(new OtaRxCB());
+  otaTxChar = svc->createCharacteristic(OTA_TX_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+  otaTxChar->addDescriptor(new BLE2902());
   svc->start();
   initMediaHid(server);
   appleMedia.begin();
@@ -139,6 +154,11 @@ void setup() {
   adv->setAppearance(GENERIC_HID);
   adv->setScanResponse(true);
   BLEDevice::startAdvertising();
+  deviceBleOK = true;
+  batPoll();
+  queueDeviceInfo();
+  queueDeviceSelfTest();
+  printDeviceDiagnosticsSerial();
   idlePowerOffReset(&idlePowerOffTimer, millis());
   Serial.println(String("MotoNav ready, firmware ") + FW_VERSION);
 }
@@ -331,7 +351,7 @@ void loop() {
   // Idle phone traffic does not count as navigation; external power inhibits off.
   const bool navigating = idlePowerOffNavigationActive(
       bleConnected && bleAuthed, inNav, cruiseOn, navDir == "A");
-  const bool interacting = pairOn || pairReq || callOn || touchDown || dragging || sliding;
+  const bool interacting = pairOn || pairReq || callOn || touchDown || dragging || sliding || otaActive;
   if (idlePowerOffDueOnBattery(&idlePowerOffTimer, millis(), navigating, interacting, &idlePowerSupply)) {
     bool queued;
     portENTER_CRITICAL(&mux);

@@ -30,6 +30,21 @@ void sendPendingAck() {
   if (pendingBuildingCapability) {
     txChar->setValue((uint8_t *)"CAP,BLD,1", 9); txChar->notify(); pendingBuildingCapability=false;
   }
+  if (pendingDeviceInfo.length()) {
+    txChar->setValue((uint8_t *)pendingDeviceInfo.c_str(), pendingDeviceInfo.length());
+    txChar->notify();
+    pendingDeviceInfo = "";
+  }
+  if (pendingDeviceSelfTest.length()) {
+    txChar->setValue((uint8_t *)pendingDeviceSelfTest.c_str(), pendingDeviceSelfTest.length());
+    txChar->notify();
+    pendingDeviceSelfTest = "";
+  }
+  if (pendingBleStatus.length()) {
+    txChar->setValue((uint8_t *)pendingBleStatus.c_str(), pendingBleStatus.length());
+    txChar->notify();
+    pendingBleStatus = "";
+  }
   if (pendingAck.length()) {
     txChar->setValue((uint8_t *)pendingAck.c_str(), pendingAck.length());
     txChar->notify();

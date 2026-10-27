@@ -15,7 +15,7 @@ void batPoll() {
     int v = pmuRead(0xA4);
     if (v >= 0 && v <= 100) pct = v;
     int h = pmuRead(0x34), l = pmuRead(0x35);
-    if (h >= 0 && l >= 0) batMv = ((h & 0x1F) << 8) | l;
+    if (h >= 0 && l >= 0) batMv = ((h & 0x3F) << 8) | l;
   }
   // v7.2 偶尔读不到电池：先沿用上次的电量，连续 3 次读不到才当成没接电池
   static int missCnt = 0;
@@ -23,8 +23,20 @@ void batPoll() {
   else missCnt = 0;
   bool chg = present && ((s2 >> 5) & 3) == 1;
   bool usb = ((s1 >> 5) & 1) && !((s2 >> 3) & 1);
-  bool changed = pct != batPct || chg != batChg || usb != usbIn;
+  const int oldPct = batPct;
+  const bool oldChg = batChg;
+  const bool oldUsb = usbIn;
+  const int oldLevel = batteryLevel;
+  const int oldTemp = pmuTempC10;
+  const int oldVbus = vbusMv;
+  const int temp = pmuReadTemperatureC10();
+  const int vh = pmuRead(0x38), vl = pmuRead(0x39);
+  if (vh >= 0 && vl >= 0) vbusMv = ((vh & 0x3F) << 8) | vl;
+  pmuTempC10 = temp;
   batPct = pct; batChg = chg; usbIn = usb;
+  batteryLevel = classifyBatteryLevel(batPct);
+  const bool changed = pct != oldPct || chg != oldChg || usb != oldUsb ||
+      batteryLevel != oldLevel || pmuTempC10 != oldTemp || vbusMv != oldVbus;
   if (mediaHid && changed && pct >= 0) mediaHid->setBatteryLevel((uint8_t)constrain(pct, 0, 100));
   if (changed) {
     if (onWaitScreen && page == 0 && !sliding) drawStatus();        // v7.2 只重画状态栏
@@ -32,6 +44,11 @@ void batPoll() {
   }
   if (changed || now - batSentAt > 60000) {
     batSentAt = now;
-    pendingBat = "V," + String(batPct) + "," + String(batChg ? 1 : 0) + "," + String(usbIn ? 1 : 0) + "," + String(batMv);
+    // Keep the original five fields first for older Android clients:
+    // V,pct,charging,usb,battery_mV,level,temp_C10,vbus_mV,ota_allowed
+    pendingBat = "V," + String(batPct) + "," + String(batChg ? 1 : 0) + "," +
+        String(usbIn ? 1 : 0) + "," + String(batMv) + "," + String(batteryLevel) +
+        "," + String(pmuTempC10) + "," + String(vbusMv) + "," +
+        String(powerAllowsOta() ? 1 : 0);
   }
 }

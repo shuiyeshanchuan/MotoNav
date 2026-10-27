@@ -146,7 +146,7 @@ import androidx.appcompat.app.AppCompatActivity
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.26"
+const val APP_VERSION = "v8.3.29"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（罪恶都市夜景：深紫黑底、霓虹粉、青色） ----------------
@@ -168,6 +168,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pvRaw: ImageView
     private lateinit var pvCls: ImageView
     private var shownPv = -1
+    private var otaManifestUri: Uri? = null
+    private var otaStatusView: TextView? = null
+    private var onlineOtaStatusView: TextView? = null
+    private var onlineOtaCheckButton: TextView? = null
+    private var onlineOtaUpdateButton: TextView? = null
+    private var onlineOtaCandidate: FirmwareUpdateClient.Candidate? = null
+    private var onlineOtaBusy = false
+
+    private companion object {
+        const val PICK_OTA_MANIFEST = 4101
+        const val PICK_OTA_APP = 4102
+    }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun dpf(v: Float) = v * resources.displayMetrics.density
@@ -1119,10 +1131,119 @@ class MainActivity : AppCompatActivity() {
         card.addView(settingRow("连哪块圆屏",
             "App 优先连上次那块；身边有几块圆屏、想连另一块时点「换一块」。编号在圆屏首页下方",
             textLink("换一块") { BleLink.switchScreen(this); toast("正在找另一块圆屏…") }))
+        card.addView(divider())
+        card.addView(subhead("圆屏固件更新"))
+        card.addView(note("通过 GitHub 稳定版检查、下载并校验签名固件；全程不需要电脑或文件管理器。请停车后、保持手机靠近圆屏并接入稳定电源。"))
+        val check = pillButton("检查稳定版更新", PURPLE) { checkGithubOta() }
+        val update = pillButton("立即更新圆屏", PINK) { confirmGithubOta() }.apply { visibility = View.GONE }
+        val status = label("连接圆屏后可检查更新", 12f, SUB).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) }
+        card.addView(check, lpMatch(top = 10, bottom = 6))
+        card.addView(update, lpMatch(bottom = 4))
+        card.addView(status)
+        onlineOtaCheckButton = check
+        onlineOtaUpdateButton = update
+        onlineOtaStatusView = status
     }
 
     private fun screenSummary(): String =
         "亮度" + (if (Brightness.auto) "自动" else "手动") + " · 方向 ${MapFeeder.screenDeg}° · 来电显示" + (if (CallWatcher.enabled) "开" else "关")
+
+    /** GitHub Release → checked package → the existing signed BLE OTA transport. */
+    private fun checkGithubOta() {
+        if (onlineOtaBusy) return
+        val board = BleLink.screenBoard
+        if (!BleLink.isConnected || !BleLink.verified || board.isBlank()) {
+            onlineOtaStatusView?.text = "请先连接并完成圆屏配对，再检查更新"
+            return
+        }
+        onlineOtaBusy = true
+        onlineOtaCandidate = null
+        onlineOtaCheckButton?.apply { isEnabled = false; alpha = 0.55f; text = "正在检查…" }
+        onlineOtaUpdateButton?.visibility = View.GONE
+        onlineOtaStatusView?.text = "正在检查 GitHub 稳定版…"
+        Thread {
+            try {
+                val candidate = FirmwareUpdateClient.check(board)
+                runOnUiThread {
+                    val current = BleLink.screenFirmware
+                    when {
+                        candidate.version == current -> onlineOtaStatusView?.text = "已是最新稳定版：$current"
+                        !FirmwareUpdateClient.isNotOlder(candidate.version, current) ->
+                            onlineOtaStatusView?.text = "当前圆屏版本 $current 比 GitHub 稳定版更新，不降级"
+                        else -> {
+                            onlineOtaCandidate = candidate
+                            onlineOtaStatusView?.text = buildString {
+                                append("发现稳定版 ${candidate.version}")
+                                if (current.isNotBlank()) append("（当前 $current）")
+                                if (candidate.notes.isNotBlank()) append("\n\n").append(candidate.notes)
+                            }
+                            onlineOtaUpdateButton?.apply { text = "更新至 ${candidate.version}"; visibility = View.VISIBLE }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { onlineOtaStatusView?.text = "检查更新失败：${e.message ?: "网络或发布信息异常"}" }
+            } finally {
+                runOnUiThread {
+                    onlineOtaBusy = false
+                    onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+                }
+            }
+        }.start()
+    }
+
+    private fun confirmGithubOta() {
+        val candidate = onlineOtaCandidate ?: return
+        if (onlineOtaBusy) return
+        android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+            .setTitle("更新圆屏固件？")
+            .setMessage("将从 GitHub 下载已签名的 ${candidate.version}，再通过蓝牙更新圆屏。\n\n请确认已停车、手机和圆屏保持靠近，且诊断页显示“OTA 电源条件 满足”。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton("开始更新") { _, _ -> downloadAndStartGithubOta(candidate) }
+            .show()
+    }
+
+    private fun downloadAndStartGithubOta(candidate: FirmwareUpdateClient.Candidate) {
+        onlineOtaBusy = true
+        onlineOtaCheckButton?.apply { isEnabled = false; alpha = 0.55f }
+        onlineOtaUpdateButton?.apply { isEnabled = false; alpha = 0.55f }
+        onlineOtaStatusView?.text = "正在下载并校验 ${candidate.version}…"
+        Thread {
+            try {
+                val pkg = FirmwareUpdateClient.downloadPackage(candidate) { text ->
+                    runOnUiThread { onlineOtaStatusView?.text = text }
+                }
+                runOnUiThread {
+                    onlineOtaStatusView?.text = "文件校验通过，正在请求圆屏升级…"
+                    if (!startOtaPackage(pkg) { onlineOtaStatusView?.text = it }) {
+                        onlineOtaBusy = false
+                        onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f }
+                        onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    onlineOtaBusy = false
+                    onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f }
+                    onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
+                    onlineOtaStatusView?.text = "下载或校验失败：${e.message ?: "网络或文件异常"}"
+                }
+            }
+        }.start()
+    }
+
+    private fun startOtaPackage(pkg: OtaPackage, show: (String) -> Unit): Boolean = BleLink.startOta(
+        pkg.board, pkg.version, pkg.image, pkg.sha256, pkg.signatureAlgorithm, pkg.signatureKeyId, pkg.signatureBase64,
+        object : BleLink.OtaListener {
+            override fun onState(text: String) = runOnUiThread { show(text) }
+            override fun onProgress(sent: Int, total: Int) = runOnUiThread { show("OTA 传输中：$sent / $total 字节") }
+            override fun onFinished(success: Boolean, message: String) = runOnUiThread {
+                onlineOtaBusy = false
+                onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f }
+                onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
+                show((if (success) "完成：" else "失败：") + message)
+            }
+        })
 
     /** v6.2 Key 设置：显示两个 key 填没填，点「填写 / 修改」弹出填写页 */
     private fun keySection(card: LinearLayout) {
@@ -1227,6 +1348,16 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { bottomMargin = dp(10) })
         card.addView(pillButton("用高德原版界面导航", STROKE) { NaviBridge.startNaviComponent(this@MainActivity) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { bottomMargin = dp(10) })
+        card.addView(subhead("圆屏 OTA 升级", top = 14))
+        card.addView(note("仅选择 1.75C 构建产物中的 manifest 和 *_app_0x10000.bin；完整 *_full_0x0.bin 只用于 USB 救援。升级前请停车、接入稳定电源，并保持手机与圆屏靠近。"))
+        card.addView(pillButton("选择 OTA manifest", STROKE) {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type = "application/json"
+                addCategory(Intent.CATEGORY_OPENABLE)
+            }, PICK_OTA_MANIFEST)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
+        otaStatusView = label("尚未选择 OTA 文件", 12f, SUB).apply { setPadding(0, dp(8), 0, 0) }
+        card.addView(otaStatusView)
         val info = label("", 12f, SUB).apply { setLineSpacing(0f, 1.15f); setTextIsSelectable(true) }
         card.addView(info)
         // 高德预览：左 = 原图，右 = 归类上色后
@@ -1243,6 +1374,8 @@ class MainActivity : AppCompatActivity() {
                 info.text = (if (crash.isNotEmpty()) "⚠ 上次闪退（截图发出来；长按这里清除）：\n$crash\n\n" else "") +
                     "Key：${Keys.applyInfo}\n" +
                     "圆屏：${BleLink.statsText()}\n${BleLink.screenStats}\n" +
+                    "设备：${BleLink.screenInfo}\n自检：${BleLink.screenSelfTest}\nBLE：${BleLink.screenBleStats}\n" +
+                    "电源：${BleLink.screenBattery}，温度 ${if (BleLink.screenPmuTempC10 < 0) "未知" else "%.1f°C".format(BleLink.screenPmuTempC10 / 10f)}，OTA 电源条件 ${if (BleLink.screenOtaPower) "满足" else "不满足"}\n" +
                     (if (BleLink.screenProf.isNotEmpty()) "${BleLink.screenProf}\n" else "") + "\n" +
                     "小地图：${MapFeeder.infoText()}\n\n" +
                     "导航：${NaviBridge.lastInfo}\n" +
@@ -1522,6 +1655,32 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (searchInput?.text.isNullOrBlank()) refreshHomeIdle?.invoke()     // v6.3 选路线页回来：更新“最近去过”
+    }
+
+    @Deprecated("使用旧式文件选择器以兼容当前项目的最低 Android 版本")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK || data?.data == null) return
+        if (requestCode == PICK_OTA_MANIFEST) {
+            otaManifestUri = data.data
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type = "application/octet-stream"
+                addCategory(Intent.CATEGORY_OPENABLE)
+            }, PICK_OTA_APP)
+            otaStatusView?.text = "已选择 manifest，请继续选择同目录的 *_app_0x10000.bin"
+            return
+        }
+        if (requestCode == PICK_OTA_APP) {
+            val manifest = otaManifestUri ?: return
+            try {
+                val pkg = OtaPackage.read(this, manifest, data.data!!)
+                otaStatusView?.text = "已读取 ${pkg.boardName} / ${pkg.version}，正在请求 OTA…"
+                val started = startOtaPackage(pkg) { otaStatusView?.text = it }
+                if (!started) otaStatusView?.text = "OTA 未开始：请先连接并完成配对，且等待导航数据发送完"
+            } catch (e: Exception) {
+                otaStatusView?.text = "OTA 文件错误：${e.message ?: "无法读取"}"
+            }
+        }
     }
 
     override fun onDestroy() {

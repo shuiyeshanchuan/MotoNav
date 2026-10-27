@@ -8,7 +8,11 @@
 #define LCD_SDIO3 7
 #define LCD_SCLK 38
 #define LCD_CS 12
+#ifdef MOTONAV_175C
+#define LCD_RESET 1
+#else
 #define LCD_RESET 39
+#endif
 #define LCD_WIDTH 466
 #define LCD_HEIGHT 466
 
@@ -16,7 +20,11 @@
 #define IIC_SDA 15
 #define IIC_SCL 14
 #define TP_INT 11
+#ifdef MOTONAV_175C
+#define TP_RESET 2
+#else
 #define TP_RESET 40
+#endif
 
 // ES8311
 #define I2S_MCK_IO 16

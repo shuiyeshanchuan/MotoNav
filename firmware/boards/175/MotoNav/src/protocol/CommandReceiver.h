@@ -26,6 +26,7 @@ int hexVal(char c) {
 
 // 处理文字类消息
 void handleText(const String &m) {
+  if (m.startsWith("#OTA,")) { otaHandleControl(m); return; }
   if(m.startsWith("#TLA,")) {
     const int previous=trafficLightFrame.key;
     const bool accepted=trafficLightFrame.receive(m.c_str(),millis());
@@ -100,6 +101,8 @@ void handleText(const String &m) {
   }
   if (m == "#AMS?") { appleMedia.resend(); return; }
   if (m == "#GB?") { pendingBuildingCapability=true; return; }
+  if (m == "#INFO?") { queueDeviceInfo(); queueDeviceSelfTest(); return; }
+  if (m == "#BLE?") { queueBleStatus(); return; }
   if (m.startsWith("#ZACK,")) {
     if (hidMusicMode) return;
     musicAck = constrain(m.substring(6).toInt(), 0, 5);

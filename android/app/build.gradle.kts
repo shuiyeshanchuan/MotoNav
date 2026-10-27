@@ -12,6 +12,10 @@ val ksProps = Properties().apply {
     val f = rootProject.file("keystore/keystore.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
+val personalProps = Properties().apply {
+    val f = rootProject.file("personal.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
 
 // Generate a new development key on the recipient's machine, including when
 // building directly in Android Studio. It is excluded from the source archive.
@@ -35,11 +39,13 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = providers.gradleProperty("personalApplicationId").getOrElse("com.example.motonav")
+        applicationId = providers.gradleProperty("personalApplicationId")
+            .orElse(personalProps.getProperty("personalApplicationId", "com.example.motonav"))
+            .get()
         minSdk = 26
         targetSdk = 35
-        versionCode = 130
-        versionName = "8.3.26"
+        versionCode = 132
+        versionName = "8.3.29"
         ndk { abiFilters += setOf("arm64-v8a") }
     }
 

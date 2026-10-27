@@ -28,6 +28,16 @@ python3 firmware/build.py
 
 Windows 也可执行 `./firmware/build.ps1 -Board 175`，用 `-CliPath`、`-ConfigFile` 指定工具。镜像与大小/哈希清单位于 `firmware/dist/175/panel0`。清单的 `deviceTested: false` 保持保守标记，具体已完成和未完成的硬件验证以上述更新说明为准。
 
+ESP32-S3-Touch-AMOLED-1.75C 使用独立目标 `175c`：
+
+```powershell
+./firmware/build.ps1 -Board 175c -CliPath $cli -ConfigFile $config
+```
+
+该目标使用 1.75C 的 GPIO1/GPIO2 复位脚和 32MB `app5M_fat24M_32MB` 分区，产物位于 `firmware/dist/175c/panel0`。1.75C 首次烧录必须使用其中的 `*_full_0x0.bin` 完整镜像；不要把普通 1.75 的 16MB 镜像刷到 1.75C。
+
+当前开发版 `v7.12.9-power.14` 已包含 BLE OTA 协议：OTA 只发送 `*_app_0x10000.bin`，`*_full_0x0.bin` 继续作为 USB 救援镜像。OTA 仍需先把本版本通过 USB 刷入，并完成断线、断电、错误 SHA256 和回滚实测；在此之前不要把 `deviceTested: false` 当作已验证发布版。
+
 ## 测试
 
 ```sh

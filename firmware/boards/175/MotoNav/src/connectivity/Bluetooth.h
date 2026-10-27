@@ -121,7 +121,7 @@ void initMediaHid(BLEServer *server) {
 
 class ServerCB : public BLEServerCallbacks {
   void onConnect(BLEServer *s) {
-    bleConnected = true; ++mediaConnectionEpoch;
+    bleConnected = true; ++bleConnectCount; ++mediaConnectionEpoch;
     bleAuthed = false;
     hidSubscribed = false; hidSubscriber = 0xFFFF; hidSuspended = false; hidReportMode = true; ++hidSessionEpoch;
     bleConnAt = millis();
@@ -131,7 +131,9 @@ class ServerCB : public BLEServerCallbacks {
   void onConnect(BLEServer *s, ble_gap_conn_desc *desc) { if (desc) bleConnHandle = desc->conn_handle; }
 #endif
   void onDisconnect(BLEServer *s) {
-    bleConnected = false; ++mediaConnectionEpoch;
+    bleConnected = false;
+    if (otaActive) otaAbort("DISCONNECT");
+    ++bleDisconnectCount; ++mediaConnectionEpoch;
     bleAuthed = false;
     bleConnHandle = 0xFFFF;
     hidSubscribed = false; hidSubscriber = 0xFFFF; ++hidSessionEpoch;
@@ -154,7 +156,9 @@ class RxCB : public BLECharacteristicCallbacks {
     if (powerOffPending) return;
     size_t n = c->getLength();
     if (n == 0) return;
+    lastBleWriteMs = millis();
     const uint8_t *d0 = c->getData();
+    if (otaActive && (n < 5 || memcmp(d0, "#OTA,", 5) != 0)) return;
     if (n >= 4 && n < 12 && d0[0] == '#' && d0[2] == ',' && (d0[1] == 'f' || d0[1] == 'q')) {
       char num[12];
       size_t ln = n - 3;
@@ -165,10 +169,17 @@ class RxCB : public BLECharacteristicCallbacks {
       if (d0[1] == 'q' && (v == 40 || v == 60 || v == 80) && v != qspiMHz) saveAndRestart("qspi", v, false);
       return;
     }
-    if (n > RXQ_MAX) n = RXQ_MAX;
+    if (n > RXQ_MAX) {
+      ++rxOversizeCount;
+      return; // Never truncate a binary bulk packet into a plausible-looking corrupt frame.
+    }
     portENTER_CRITICAL(&mux);
     int next = (rxHead + 1) % RXQ_SLOTS;
-    if (next == rxTail) rxTail = (rxTail + 1) % RXQ_SLOTS;   // 队列满：丢掉最旧的一条
+    if (next == rxTail) {
+      ++rxDroppedCount;
+      portEXIT_CRITICAL(&mux);
+      return; // Keep queued frames intact; the sender can observe BLE diagnostics.
+    }
     rxq[rxHead].len = n;
     memcpy(rxq[rxHead].data, c->getData(), n);
     rxHead = next;

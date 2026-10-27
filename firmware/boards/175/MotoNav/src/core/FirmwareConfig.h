@@ -1,6 +1,17 @@
 #pragma once
 // 版本、诊断选项及路口灯状态，保持原先位于 Arduino.h 之前的顺序。
-#define FW_VERSION "v7.12.9-junction.11"
+#define FW_VERSION "v7.12.9-power.14"
+#define MOTONAV_PROTOCOL_VERSION 1
+#if defined(MOTONAV_175C)
+#define MOTONAV_BOARD_ID "175C"
+#define MOTONAV_FLASH_MB 32
+#else
+#define MOTONAV_BOARD_ID "175"
+#define MOTONAV_FLASH_MB 16
+#endif
+// 当前版本已经有双 OTA 分区，并启用了 BLE OTA 接收协议。
+#define MOTONAV_OTA_PARTITION 1
+#define MOTONAV_OTA_READY 1
 #include "../../TrafficLightLab.h"
 TrafficLightLab trafficLightLab;
 TrafficLightFrame trafficLightFrame;

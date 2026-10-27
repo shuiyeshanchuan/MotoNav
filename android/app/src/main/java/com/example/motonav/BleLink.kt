@@ -26,6 +26,7 @@ import android.os.SystemClock
 import java.util.UUID
 import android.util.Log
 import com.example.motonav.BleSession.Phase
+import java.security.MessageDigest
 
 /**
  * 版本：跟随 App 版本，见 MainActivity.kt 里的 APP_VERSION（当前 v5.7；v5.7 显示底图用时；v4.6 请求蓝牙 2M 模式、统计实际传输速度；v5.5 图片栏扩到 8 个，修复天气页闪退）
@@ -54,6 +55,8 @@ object BleLink {
     private val SERVICE_UUID: UUID = UUID.fromString("6e400001-b5a3-f393-e0a9-e50e24dcca9e")
     private val RX_UUID: UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e")
     private val TX_UUID: UUID = UUID.fromString("6e400003-b5a3-f393-e0a9-e50e24dcca9e")   // v2.0 圆屏 → 手机
+    private val OTA_RX_UUID: UUID = UUID.fromString("6e400004-b5a3-f393-e0a9-e50e24dcca9e")
+    private val OTA_TX_UUID: UUID = UUID.fromString("6e400005-b5a3-f393-e0a9-e50e24dcca9e")
     private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
     private const val BULK_HEADER = 15
 
@@ -63,12 +66,18 @@ object BleLink {
     private const val HEARTBEAT_MS = 2000L
     private const val MAX_WRITE = 500          // 圆屏单个数据包最多收 512 字节，留点余量
     private const val IMG_HEADER = 10
+    private const val OTA_HEADER = 12
+    private const val OTA_PAYLOAD_MAX = 488
 
     @Volatile var status = "未连接"
     @Volatile var verified = false               // v6.4 圆屏说这台手机通过了配对验证（"U,1"）
     @Volatile var pairHint = ""                  // v6.4 配对过程的提示（给界面看）
     @Volatile var screenBattery = ""             // v7.6 圆屏电量（固件 v6.8 起，接了电池才有），例 "85%⚡"
     @Volatile var screenBatteryPct = -1
+    @Volatile var screenBatteryLevel = 0          // 0 unknown, 1 critical, 2 low, 3 normal
+    @Volatile var screenPmuTempC10 = -1           // AXP2101 die temperature, 0.1°C
+    @Volatile var screenVbusMv = 0
+    @Volatile var screenOtaPower = false
     @Volatile var screenName = ""                // v7.8 连着的圆屏蓝牙名，例 "MotoNav-3A7F"（旧固件都叫 "MotoNav"）
     private var lastAddr: String? = null         // v7.8 上次验证通过的圆屏地址（存在手机上）
     private var skipAddr = ""                    // v7.8 换圆屏时这次搜索跳过的地址
@@ -90,11 +99,12 @@ object BleLink {
     }
 
     private fun closeCurrent() {
+        if (otaInProgress) finishOta(false, "蓝牙连接中断")
         val old = gatt
         gatt = null
         old?.let { session.clear(it) }
         ready = false; verified = false; buildingsSupported = false
-        capabilityQuerySent = false; rxChar = null; mtu = 23
+        capabilityQuerySent = false; rxChar = null; otaRxChar = null; otaTxChar = null; mtu = 23
         phyText = "?"; burstStart = 0L
         synchronized(lock) { writing = false; queue.clear(); bulkQ.clear() }
         try { old?.disconnect() } catch (_: Exception) {}
@@ -109,6 +119,8 @@ object BleLink {
         scheduleRetry()
     }
     private var rxChar: BluetoothGattCharacteristic? = null
+    private var otaRxChar: BluetoothGattCharacteristic? = null
+    private var otaTxChar: BluetoothGattCharacteristic? = null
     private var appContext: Context? = null
     private var scanning = false
     private var auto = false
@@ -133,6 +145,13 @@ object BleLink {
     private var burstBytes = 0L
     @Volatile var buildingsSupported = false
     @Volatile var screenStats = ""                    // v2.0.1 圆屏发来的帧率统计
+    @Volatile var screenInfo = ""                     // 设备身份、版本和分区信息
+    @Volatile var screenSelfTest = ""                 // 最近一次启动自检结果
+    @Volatile var screenBleStats = ""                 // 最近一次 BLE 队列/重连诊断
+    @Volatile var screenBoard = ""
+    @Volatile var screenFirmware = ""
+    @Volatile var screenProtocol = -1
+    @Volatile var screenOtaReady = false
     @Volatile var screenProf = ""                     // v5.8 每帧各步骤用时
     @Volatile var screenFps = ""                      // v2.6 给新界面用：帧率、屏幕速度、快速刷屏
     @Volatile var screenMhz = -1
@@ -152,6 +171,25 @@ object BleLink {
     @Volatile var lastSentMsg = ""
     @Volatile var lastSentAt = 0L
     @Volatile var imgSentCount = 0
+
+    interface OtaListener {
+        fun onState(text: String)
+        fun onProgress(sent: Int, total: Int)
+        fun onFinished(success: Boolean, message: String)
+    }
+
+    @Volatile var otaInProgress = false
+    private var otaImage: ByteArray? = null
+    private var otaExpectedSha = ""
+    private var otaSeq = 0
+    private var otaOffset = 0
+    private var otaWriteInFlight = false
+    private var otaAckPending = false
+    private var otaEndSent = false
+    private var otaReady = false
+    private var otaRetries = 0
+    private var otaLastProgressAt = 0L
+    private var otaListener: OtaListener? = null
 
     private fun now() = SystemClock.elapsedRealtime()
 
@@ -323,6 +361,9 @@ object BleLink {
         closeCurrent()
         triedDirect = false
         screenName = ""; screenBattery = ""; screenBatteryPct = -1
+        screenBatteryLevel = 0; screenPmuTempC10 = -1; screenVbusMv = 0; screenOtaPower = false
+        screenBleStats = ""
+        screenBoard = ""; screenFirmware = ""; screenProtocol = -1; screenOtaReady = false
         pairHint = ""; staleCount = 0; needUnbond = false
         connect(c)
     }
@@ -361,12 +402,33 @@ object BleLink {
             status = "已连接（高速模式，数据包 ${maxWrite()} 字节）"
             resendAll()
             sendEvent("#HM,0")
+            send("#BLE?")
         }
     }
 
     private fun onNotify(bytes: ByteArray?) {
         val msg = bytes?.toString(Charsets.UTF_8)?.trim() ?: return
         if (BleSession.confirms(msg, capabilityQuerySent)) markVerified()
+        if(msg.startsWith("INFO,")) {
+            screenInfo = msg
+            val info = msg.split(',')
+            screenBoard = info.getOrNull(1).orEmpty()
+            screenFirmware = info.getOrNull(2).orEmpty()
+            screenProtocol = info.getOrNull(3)?.toIntOrNull() ?: -1
+            screenOtaReady = info.getOrNull(5) == "1"
+            trace("device $msg"); return
+        }
+        if(msg.startsWith("SELFTEST,")) {
+            screenSelfTest = msg
+            val self = msg.split(',')
+            screenBatteryPct = self.getOrNull(10)?.toIntOrNull() ?: screenBatteryPct
+            screenBatteryLevel = self.getOrNull(11)?.toIntOrNull() ?: screenBatteryLevel
+            screenPmuTempC10 = self.getOrNull(15)?.toIntOrNull() ?: screenPmuTempC10
+            screenVbusMv = self.getOrNull(16)?.toIntOrNull() ?: screenVbusMv
+            screenOtaPower = self.getOrNull(17) == "1"
+            trace("device $msg"); return
+        }
+        if(msg.startsWith("BLE,")) { screenBleStats = msg; trace("device $msg"); return }
         if(msg=="CAP,HID,1") { handler.post { sendEvent("#HM,0") }; return }
         if(msg=="CAP,BLD,1") {
             handler.post { if(!buildingsSupported) { buildingsSupported=true;MapFeeder.onBuildingCapability() } }
@@ -385,10 +447,16 @@ object BleLink {
             return
         }
         if (p.size >= 2 && p[0] == "T") { CallWatcher.onScreenTouch(p); return }   // v5.3 圆屏触屏接听
-        if (p.size >= 3 && p[0] == "V") {                // v7.6 圆屏电量：V,百分比,充电,USB,mV
+        if (p.size >= 3 && p[0] == "V") {                // V,百分比,充电,USB,mV,level,temp_C10,vbus_mV,ota_allowed
             val pct = p[1].toIntOrNull() ?: -1
             screenBatteryPct = pct
-            screenBattery = if (pct < 0) "" else "$pct%" + (if (p[2] == "1") "⚡充电中" else "")
+            screenBatteryLevel = p.getOrNull(5)?.toIntOrNull() ?: 0
+            screenPmuTempC10 = p.getOrNull(6)?.toIntOrNull() ?: -1
+            screenVbusMv = p.getOrNull(7)?.toIntOrNull() ?: 0
+            screenOtaPower = p.getOrNull(8) == "1"
+            screenBattery = if (pct < 0) "" else "$pct%" +
+                (if (p[2] == "1") "⚡充电中" else "") +
+                (if (p.size > 3 && p[3] == "1") "🔌" else "")
             return
         }
         if (p.size >= 2 && p[0] == "BOOT") {
@@ -412,6 +480,126 @@ object BleLink {
         }
     }
 
+    private fun onOtaNotify(bytes: ByteArray?) {
+        val msg = bytes?.toString(Charsets.UTF_8)?.trim() ?: return
+        val p = msg.split(',')
+        if (p.isEmpty() || p[0] != "OTA") return
+        when (p.getOrNull(1)) {
+            "READY" -> {
+                otaReady = true; otaRetries = 0; otaLastProgressAt = now()
+                otaListener?.onState("圆屏已准备 OTA，开始传输")
+                sendNextOtaPacket()
+            }
+            "ACK" -> {
+                val ackSeq = p.getOrNull(2)?.toIntOrNull() ?: return
+                val ackOffset = p.getOrNull(3)?.toIntOrNull() ?: return
+                if (ackSeq < otaSeq) return
+                if (ackSeq != otaSeq) { finishOta(false, "OTA 序号不同步"); return }
+                otaSeq++
+                otaOffset = ackOffset.coerceAtMost(otaImage?.size ?: 0)
+                otaRetries = 0; otaLastProgressAt = now()
+                otaListener?.onProgress(otaOffset, otaImage?.size ?: 0)
+                if (otaOffset >= (otaImage?.size ?: 0)) {
+                    if (!otaEndSent) { otaEndSent = true; otaListener?.onState("正在校验固件"); send("#OTA,END") }
+                } else if (otaWriteInFlight) {
+                    otaAckPending = true
+                } else sendNextOtaPacket()
+            }
+            "NACK" -> {
+                otaSeq = p.getOrNull(2)?.toIntOrNull() ?: return
+                otaOffset = p.getOrNull(3)?.toIntOrNull() ?: return
+                otaRetries++
+                if (otaRetries > 5) finishOta(false, "OTA 重试次数过多")
+                else if (otaWriteInFlight) otaAckPending = true else sendNextOtaPacket()
+            }
+            "DONE" -> finishOta(true, "OTA 升级完成，圆屏正在重启")
+            "ERR" -> finishOta(false, p.drop(2).joinToString(",").ifEmpty { "圆屏拒绝 OTA" })
+        }
+    }
+
+    private fun sendNextOtaPacket() {
+        if (!otaInProgress || !otaReady || otaEndSent || otaWriteInFlight) return
+        val image = otaImage ?: return finishOta(false, "OTA 固件数据为空")
+        if (otaOffset >= image.size) return
+        val wirePayload = maxWrite() - OTA_HEADER
+        if (wirePayload <= 0) return finishOta(false, "手机蓝牙数据包太小，无法 OTA")
+        val count = minOf(OTA_PAYLOAD_MAX, wirePayload, image.size - otaOffset)
+        val packet = ByteArray(OTA_HEADER + count)
+        packet[0] = 'O'.code.toByte(); packet[1] = 1
+        fun put32(at: Int, value: Int) {
+            packet[at] = value.toByte(); packet[at + 1] = (value ushr 8).toByte()
+            packet[at + 2] = (value ushr 16).toByte(); packet[at + 3] = (value ushr 24).toByte()
+        }
+        put32(2, otaSeq); put32(6, otaOffset)
+        packet[10] = count.toByte(); packet[11] = (count ushr 8).toByte()
+        image.copyInto(packet, OTA_HEADER, otaOffset, otaOffset + count)
+        val g = gatt ?: return finishOta(false, "OTA 连接不存在")
+        val c = otaRxChar ?: return finishOta(false, "圆屏不支持 OTA")
+        try {
+            val accepted = if (Build.VERSION.SDK_INT >= 33) {
+                g.writeCharacteristic(c, packet, BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) == BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                c.value = packet
+                c.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                @Suppress("DEPRECATION")
+                g.writeCharacteristic(c)
+            }
+            if (!accepted) { finishOta(false, "手机蓝牙拒绝 OTA 数据"); return }
+            otaWriteInFlight = true
+            otaLastProgressAt = now()
+        } catch (_: Exception) { finishOta(false, "OTA 数据发送异常") }
+    }
+
+    private fun finishOta(success: Boolean, message: String) {
+        if (!otaInProgress && otaListener == null) return
+        val cb = otaListener
+        otaInProgress = false; otaImage = null; otaExpectedSha = ""; otaSeq = 0; otaOffset = 0
+        otaWriteInFlight = false; otaAckPending = false; otaEndSent = false; otaReady = false; otaRetries = 0
+        otaListener = null
+        cb?.onState(message); cb?.onFinished(success, message)
+    }
+
+    fun abortOta() {
+        if (!otaInProgress) return
+        send("#OTA,ABORT")
+        finishOta(false, "已取消 OTA")
+    }
+
+    fun startOta(board: String, version: String, image: ByteArray, sha256: String,
+                 signatureAlgorithm: String, signatureKeyId: String, signatureBase64: String,
+                 listener: OtaListener): Boolean {
+        if (!ready || !verified || !screenOtaReady || screenProtocol != 1 || !screenOtaPower ||
+            otaRxChar == null || otaTxChar == null || otaInProgress || image.isEmpty()) {
+            listener.onFinished(false, "设备未满足 OTA 条件（需完成配对、协议 v1、稳定电源和 OTA 通道）")
+            return false
+        }
+        if (screenBoard.isNotBlank() && screenBoard != board) { listener.onFinished(false, "板型不匹配：设备 ${screenBoard}，文件 $board"); return false }
+        val idle = synchronized(lock) { queue.isEmpty() && bulkQ.isEmpty() && !writing }
+        if (!idle) { listener.onFinished(false, "请等待导航数据发送完成后再升级"); return false }
+        val expected = sha256.lowercase()
+        if (expected.length != 64) return false
+        val actual = MessageDigest.getInstance("SHA-256").digest(image)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        if (actual != expected) { listener.onFinished(false, "手机端 SHA-256 校验失败"); return false }
+        if (signatureAlgorithm != "RSA-SHA256-PKCS1v1.5" || !signatureKeyId.matches(Regex("[0-9a-f]{16}"))) {
+            listener.onFinished(false, "OTA 签名元数据无效"); return false
+        }
+        val signature = try { android.util.Base64.decode(signatureBase64, android.util.Base64.DEFAULT) }
+        catch (_: IllegalArgumentException) { listener.onFinished(false, "OTA 签名不是 Base64"); return false }
+        if (signature.size != 256) { listener.onFinished(false, "OTA 签名长度错误"); return false }
+        val begin = "#OTA,BEGIN,$board,$version,${image.size},$expected,$signatureAlgorithm,$signatureKeyId,$signatureBase64"
+        if (begin.toByteArray(Charsets.UTF_8).size > maxWrite()) {
+            listener.onFinished(false, "手机蓝牙数据包不足以发送 OTA 签名"); return false
+        }
+        otaListener = listener; otaImage = image.copyOf(); otaExpectedSha = expected; otaSeq = 0; otaOffset = 0
+        otaWriteInFlight = false; otaAckPending = false; otaEndSent = false; otaReady = false; otaRetries = 0
+        otaLastProgressAt = now(); otaInProgress = true
+        listener.onState("正在请求圆屏进入 OTA")
+        send(begin)
+        return true
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, st: Int, newState: Int) = onCurrent(g) {
             trace("connection status=$st state=$newState")
@@ -422,6 +610,9 @@ object BleLink {
             } else if (newState == BluetoothProfile.STATE_CONNECTED &&
                 session.move(g, Phase.CONNECTING, Phase.SERVICES, now(), 12000)) {
                 screenBattery = ""; screenBatteryPct = -1
+                screenBatteryLevel = 0; screenPmuTempC10 = -1; screenVbusMv = 0; screenOtaPower = false
+                screenBleStats = ""
+                screenBoard = ""; screenFirmware = ""; screenProtocol = -1; screenOtaReady = false
                 status = "蓝牙已连接，正在读取圆屏服务…"
                 try {
                     g.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
@@ -437,6 +628,8 @@ object BleLink {
                 failConnection(g, "读取圆屏服务失败（$st）"); return@onCurrent
             }
             rxChar = g.getService(SERVICE_UUID)?.getCharacteristic(RX_UUID)
+            otaRxChar = g.getService(SERVICE_UUID)?.getCharacteristic(OTA_RX_UUID)
+            otaTxChar = g.getService(SERVICE_UUID)?.getCharacteristic(OTA_TX_UUID)
             if (rxChar == null) { failConnection(g, "未找到圆屏导航服务"); return@onCurrent }
             val pairing = try { g.device.bondState != BluetoothDevice.BOND_BONDED } catch (_: Exception) { true }
             session.move(g, Phase.SERVICES, Phase.NOTIFY, now(), if (pairing) 120000 else 12000)
@@ -445,11 +638,16 @@ object BleLink {
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, st: Int) = onCurrent(g) {
-            if (d.uuid != CCCD_UUID || d.characteristic.uuid != TX_UUID || session.phase() != Phase.NOTIFY) return@onCurrent
+            if (d.uuid != CCCD_UUID || session.phase() != Phase.NOTIFY) return@onCurrent
             trace("notify status=$st")
             if (st != BluetoothGatt.GATT_SUCCESS) {
                 failConnection(g, "圆屏通知订阅失败（$st）"); return@onCurrent
             }
+            if (d.characteristic.uuid == TX_UUID && otaTxChar != null) {
+                enableOtaNotify(g)
+                return@onCurrent
+            }
+            if (d.characteristic.uuid != TX_UUID && d.characteristic.uuid != OTA_TX_UUID) return@onCurrent
             session.move(g, Phase.NOTIFY, Phase.MTU, now(), 3000)
             status = "圆屏通知已开启，正在协商数据包…"
             try { if (!g.requestMtu(517)) onLinkReady(g) }
@@ -476,13 +674,21 @@ object BleLink {
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
             @Suppress("DEPRECATION") val value = c.value?.copyOf()
             if (c.uuid == TX_UUID) onCurrent(g) { onNotify(value) }
+            else if (c.uuid == OTA_TX_UUID) onCurrent(g) { onOtaNotify(value) }
         }
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
             val copy = value.copyOf()
             if (c.uuid == TX_UUID) onCurrent(g) { onNotify(copy) }
+            else if (c.uuid == OTA_TX_UUID) onCurrent(g) { onOtaNotify(copy) }
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, st: Int) = onCurrent(g) {
+            if (c.uuid == OTA_RX_UUID) {
+                otaWriteInFlight = false
+                if (st != BluetoothGatt.GATT_SUCCESS) finishOta(false, "OTA 数据发送失败（$st）")
+                else if (otaAckPending) { otaAckPending = false; sendNextOtaPacket() }
+                return@onCurrent
+            }
             if (c.uuid != RX_UUID) return@onCurrent
             if (st != BluetoothGatt.GATT_SUCCESS) {
                 failConnection(g, "圆屏数据发送失败（$st）"); return@onCurrent
@@ -490,6 +696,30 @@ object BleLink {
             synchronized(lock) { writing = false }
             pump()
         }
+    }
+
+    private fun enableOtaNotify(g: BluetoothGatt) {
+        val tx = otaTxChar ?: return finishNormalNotify(g)
+        val d = tx.getDescriptor(CCCD_UUID) ?: return finishNormalNotify(g)
+        try {
+            if (!g.setCharacteristicNotification(tx, true)) return failConnection(g, "无法开启 OTA 通知")
+            val ok = if (Build.VERSION.SDK_INT >= 33) {
+                g.writeDescriptor(d, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                d.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                @Suppress("DEPRECATION")
+                g.writeDescriptor(d)
+            }
+            if (!ok) failConnection(g, "无法订阅 OTA 通知")
+        } catch (_: Exception) { failConnection(g, "OTA 通知订阅失败") }
+    }
+
+    private fun finishNormalNotify(g: BluetoothGatt) {
+        session.move(g, Phase.NOTIFY, Phase.MTU, now(), 3000)
+        status = "圆屏通知已开启，正在协商数据包…"
+        try { if (!g.requestMtu(517)) onLinkReady(g) }
+        catch (_: Exception) { onLinkReady(g) }
     }
 
     private fun phyName(p: Int) = when (p) { 1 -> "1M"; 2 -> "2M"; 3 -> "Coded"; else -> "?" }
@@ -507,6 +737,7 @@ object BleLink {
         // authenticated pairing. This recovers a U,1 missed while system HID held the link.
         capabilityQuerySent = true
         send("#GB?")
+        send("#INFO?")
         if (verified) resendAll()
     }
 
@@ -545,6 +776,10 @@ object BleLink {
                 })
             }
             if (ready && !verified) { capabilityQuerySent = true; send("#GB?") }
+            if (otaInProgress && otaReady && !otaEndSent && !otaWriteInFlight && now() - otaLastProgressAt > 5000) {
+                otaRetries++
+                if (otaRetries > 5) finishOta(false, "OTA 超时") else sendNextOtaPacket()
+            }
             val idle = synchronized(lock) { queue.isEmpty() && bulkQ.isEmpty() && !writing }
             if (ready && idle && now() - lastWriteAt > HEARTBEAT_MS - 500) send("P")
             if (auto) handler.postDelayed(this, HEARTBEAT_MS)
@@ -556,6 +791,9 @@ object BleLink {
     /** 文字消息的类型：同类型在队列里只保留最新一条 */
     private fun keyOf(msg: String): String = when {
         msg == "#GB?" -> "#GB?"
+        msg == "#INFO?" -> "#INFO?"
+        msg == "#BLE?" -> "#BLE?"
+        msg.startsWith("#OTA,") -> "#OTA"
         // v6.3 "#D角度"、v7.2 "#L毫秒" 这类没有逗号的：按前两个字符算同一类（只留最新的）
         msg.startsWith("#") -> if (msg.contains(',')) msg.substringBefore(',') else msg.take(2)
         msg == "P" -> "P"
@@ -564,6 +802,7 @@ object BleLink {
 
     /** 发送一条文字消息（导航、车速、测速、车道、亮度、心跳） */
     fun send(msg: String) {
+        if (otaInProgress && !msg.startsWith("#OTA,")) return
         val k = keyOf(msg)
         synchronized(lock) {
             if (msg == "C") {
@@ -574,7 +813,7 @@ object BleLink {
                 lastImg.clear()
                 queue.removeAll { it.key != null && it.key.startsWith("B") }
             }
-            if (k != "P" && k != "#GB?") lastState[k] = msg
+            if (k != "P" && k != "#GB?" && k != "#INFO?" && k != "#BLE?" && k != "#OTA") lastState[k] = msg
             enqueue(k, msg.toByteArray(Charsets.UTF_8))
         }
         pump()

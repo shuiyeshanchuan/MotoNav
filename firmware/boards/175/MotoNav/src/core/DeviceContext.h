@@ -88,9 +88,26 @@ String bleName = DEVICE_NAME;        // v7.0 实际蓝牙名 "MotoNav-XXXX"（XX
 #define SERVICE_UUID "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 #define RX_UUID      "6e400002-b5a3-f393-e0a9-e50e24dcca9e"
 #define TX_UUID      "6e400003-b5a3-f393-e0a9-e50e24dcca9e"   // v2.0 圆屏 → 手机通知
+#define OTA_RX_UUID  "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
+#define OTA_TX_UUID  "6e400005-b5a3-f393-e0a9-e50e24dcca9e"
 BLECharacteristic *txChar = nullptr;
+BLECharacteristic *otaTxChar = nullptr;
+BLECharacteristic *otaRxChar = nullptr;
+volatile bool otaActive = false;
+volatile uint32_t otaExpectedSize = 0;
+volatile uint32_t otaWritten = 0;
+volatile uint32_t otaNextSeq = 0;
+String otaVersion = "";
+String otaExpectedSha256 = "";
+String pendingOtaStatus = "";
 
 volatile bool bleConnected = false;
+volatile uint32_t bleConnectCount = 0;
+volatile uint32_t bleDisconnectCount = 0;
+volatile uint32_t rxDroppedCount = 0;
+volatile uint32_t rxOversizeCount = 0;
+volatile uint32_t lastBleWriteMs = 0;
+String pendingBleStatus = "";
 
 // ===== 接收队列：蓝牙线程收到的每个数据包原样放进队列，主循环再取出处理 =====
 #define RXQ_SLOTS 48   // v2.0 加大，接收地图大块数据时不丢包
