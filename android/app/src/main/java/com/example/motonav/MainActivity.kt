@@ -146,7 +146,7 @@ import androidx.appcompat.app.AppCompatActivity
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.32"
+const val APP_VERSION = "v8.3.33"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（罪恶都市夜景：深紫黑底、霓虹粉、青色） ----------------
@@ -1152,8 +1152,7 @@ class MainActivity : AppCompatActivity() {
     /** GitHub Release → checked package → the existing signed BLE OTA transport. */
     private fun checkGithubOta() {
         if (onlineOtaBusy) return
-        val board = BleLink.screenBoard
-        if (!BleLink.isConnected || !BleLink.verified || board.isBlank()) {
+        if (!BleLink.isConnected || !BleLink.verified) {
             onlineOtaStatusView?.text = "请先连接并完成圆屏配对，再检查更新"
             return
         }
@@ -1161,6 +1160,36 @@ class MainActivity : AppCompatActivity() {
         onlineOtaCandidate = null
         onlineOtaCheckButton?.apply { isEnabled = false; alpha = 0.55f; text = "正在检查…" }
         onlineOtaUpdateButton?.visibility = View.GONE
+        BleLink.refreshDeviceStatus()
+        onlineOtaStatusView?.text = "正在读取圆屏状态…"
+        waitForDeviceStatus()
+    }
+
+    private fun waitForDeviceStatus(attempt: Int = 0) {
+        if (!onlineOtaBusy) return
+        if (!BleLink.isConnected || !BleLink.verified) {
+            onlineOtaBusy = false
+            onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+            onlineOtaStatusView?.text = "圆屏连接已中断，请连接并完成配对后再检查更新"
+            return
+        }
+        val board = BleLink.screenBoard
+        val firmware = BleLink.screenFirmware
+        if (board.isNotBlank() && firmware.isNotBlank()) {
+            runGithubOtaCheck(board)
+            return
+        }
+        if (attempt >= 10) {
+            onlineOtaBusy = false
+            onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+            onlineOtaStatusView?.text = "圆屏已连接，但暂未读到完整设备信息，请稍后重试"
+            return
+        }
+        onlineOtaStatusView?.text = "正在读取圆屏状态…（${attempt + 1}/10）"
+        handler.postDelayed({ waitForDeviceStatus(attempt + 1) }, 500)
+    }
+
+    private fun runGithubOtaCheck(board: String) {
         onlineOtaStatusView?.text = "正在检查 GitHub 稳定版…"
         Thread {
             try {

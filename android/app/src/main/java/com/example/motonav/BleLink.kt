@@ -204,11 +204,32 @@ object BleLink {
     fun startAuto(context: Context) {
         appContext = context.applicationContext
         registerBondWatch(context.applicationContext)
-        if (auto) return
+        if (auto) {
+            // NavService survives an Activity restart. Refresh the device identity
+            // and OTA status so a newly opened screen does not use stale diagnostics.
+            if (ready && verified) refreshDeviceStatus()
+            return
+        }
         auto = true
         handler.removeCallbacks(heartbeat)
         handler.postDelayed(heartbeat, HEARTBEAT_MS)
         connect(context)
+    }
+
+    /** Re-read the fields used by the firmware updater after an app/service restart. */
+    fun refreshDeviceStatus() {
+        if (!ready || !verified) return
+        screenInfo = ""
+        screenBoard = ""
+        screenFirmware = ""
+        screenProtocol = -1
+        screenOtaReady = false
+        screenOtaStatusKnown = false
+        screenOtaPower = false
+        capabilityQuerySent = true
+        send("#BLE?")
+        send("#INFO?")
+        send("#OTA?")
     }
 
     fun stopAuto() {

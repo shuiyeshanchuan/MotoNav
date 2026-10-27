@@ -1,5 +1,5 @@
 // MotoNav 1.75：程序入口与运行调度。
-// v7.12.9-power.15：1.75C 电源诊断、BLE 可靠性和 BLE OTA 基础设施。
+// v7.12.9-power.16：1.75C PWR 键三秒电源菜单、连接状态刷新和 BLE OTA 基础设施。
 // 文件职责、依赖和验证结果见工程目录的“源码结构说明.txt”。
 // 实现头文件只由此入口包含，保持原编译顺序和内联优化。
 #include "src/core/FirmwareConfig.h"
@@ -53,6 +53,7 @@ void setup() {
   esp_ota_mark_app_valid_cancel_rollback();
   Wire.begin(IIC_SDA, IIC_SCL);
   touchInit();                                         // v5.2 触摸屏
+  powerButtonInit();                                   // 1.75C PWR 键：3 秒弹出软件电源菜单
   deviceTouchOK = touchOK;
   batInit();                                           // v6.8 电源芯片（电量）
   devicePmuOK = pmuOK;
@@ -252,6 +253,7 @@ void loop() {
   if (mapNow != wasMap) { wasMap = mapNow; navDirty = true; }   // 进出地图模式时整帧重画
   if (mapNow) navDirty = true;
 
+  powerButtonPoll();                                   // 1.75C PWR 键：3 秒弹出关机/重启菜单
   touchPoll();                                         // v5.2 按住接听 / v5.3 滑动换页
   batPoll();                                           // v6.8 电量
   // 4. 需要时重画导航画面
@@ -351,7 +353,8 @@ void loop() {
   // Idle phone traffic does not count as navigation; external power inhibits off.
   const bool navigating = idlePowerOffNavigationActive(
       bleConnected && bleAuthed, inNav, cruiseOn, navDir == "A");
-  const bool interacting = pairOn || pairReq || callOn || touchDown || dragging || sliding || otaActive;
+  const bool interacting = pairOn || pairReq || callOn || powerMenuOn || powerButtonDown ||
+      touchDown || dragging || sliding || otaActive;
   if (idlePowerOffDueOnBattery(&idlePowerOffTimer, millis(), navigating, interacting, &idlePowerSupply)) {
     bool queued;
     portENTER_CRITICAL(&mux);

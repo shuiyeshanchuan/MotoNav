@@ -18,6 +18,13 @@ unsigned long callAnswerAt = 0;
 String pendingProf = "";             // v5.8 分步用时
 String pendingEvt = "";              // 待发给手机的触摸事件
 
+// 1.75C PWR key: show a software menu after 3 seconds. The PMIC still has its
+// hardware long-press cutoff, so the user must release PWR before tapping.
+#define PWR_HOLD_MENU_MS 3000UL
+bool powerButtonDown = false;
+unsigned long powerButtonAt = 0;
+bool powerMenuOn = false;
+
 // v5.3 触摸芯片一有动静就拉低中断脚；平时只看这个标记，不用一直读 I2C
 volatile bool touchIrq = false;
 void IRAM_ATTR onTouchIrq() { touchIrq = true; }
@@ -27,6 +34,54 @@ void touchInit() {
   touchOK = touch.begin(Wire, 0x5A, IIC_SDA, IIC_SCL);
   Serial.println(touchOK ? "touch ok" : "touch not found");
   if (touchOK) attachInterrupt(TP_INT, onTouchIrq, FALLING);   // v5.3
+}
+
+void powerButtonInit() {
+  // SYS_OUT is driven by the PMIC and reads high while PWR is pressed.
+  pinMode(PWR_BUTTON_PIN, INPUT);
+}
+
+static void restoreAfterPowerMenu() {
+  if (page == 2) musicDirty = true;
+  else if (page == 1) wxDirty = true;
+  else if (inNav) navDirty = true;
+  else drawWaiting(shownConn ? WAIT_READY : WAIT_NOLINK);
+}
+
+void drawPowerMenu() {
+  onWaitScreen = false;
+  frameIsMap = false;
+  gfx->fillScreen(C_BLACK);
+  printCentered("POWER MENU", CX, 76, 3, C_WHITE);
+  printCentered("RELEASE PWR BUTTON", CX, 124, 2, C_GREY);
+
+  gfx->fillRoundRect(38, 190, 184, 104, 18, 0xC800);
+  gfx->drawRoundRect(38, 190, 184, 104, 18, C_RED);
+  printCentered("POWER OFF", 130, 231, 2, C_WHITE);
+
+  gfx->fillRoundRect(244, 190, 184, 104, 18, 0x04A0);
+  gfx->drawRoundRect(244, 190, 184, 104, 18, C_GREEN);
+  printCentered("RESTART", 336, 231, 2, C_WHITE);
+  printCentered("TAP AN ACTION", CX, 356, 2, C_DIM);
+  needFlush = true;
+}
+
+void powerButtonPoll() {
+  const unsigned long now = millis();
+  const bool pressed = digitalRead(PWR_BUTTON_PIN) == HIGH;
+  if (!pressed) {
+    powerButtonDown = false;
+    powerButtonAt = 0;
+    return;
+  }
+  if (!powerButtonDown) {
+    powerButtonDown = true;
+    powerButtonAt = now;
+  }
+  if (!powerMenuOn && now - powerButtonAt >= PWR_HOLD_MENU_MS) {
+    powerMenuOn = true;
+    drawPowerMenu();
+  }
 }
 
 bool touchDown = false;
@@ -43,13 +98,47 @@ void touchPoll() {
   static unsigned long lastPoll = 0;
   unsigned long now = millis();
   if (!touchOK) return;
-  if (!touchIrq && !touchDown && !callOn) return;
+  if (!touchIrq && !touchDown && !callOn && !powerMenuOn) return;
   if (now - lastPoll < 12) return;
   lastPoll = now;
   touchIrq = false;
   if (callAnswerSent && now - callAnswerAt > 4000) callAnswerSent = false;   // 4 秒还在响：允许再按一次
   int16_t x[5] = {0}, y[5] = {0};
   uint8_t n = touch.getPoint(x, y, 1);
+  if (powerMenuOn) {
+    if (n > 0) {
+      if (!touchDown) {
+        touchDown = true;
+        touchX0 = touchX1 = x[0];
+        touchY0 = touchY1 = y[0];
+      }
+      touchX1 = x[0]; touchY1 = y[0]; touchLastSeen = now;
+    } else if (touchDown && now - touchLastSeen > 80) {
+      const bool tap = abs(touchX1 - touchX0) < 36 && abs(touchY1 - touchY0) < 36;
+      const int x0 = touchX0, y0 = touchY0;
+      touchDown = false;
+      if (tap && y0 >= 190 && y0 < 294 && x0 >= 38 && x0 < 222) {
+        powerMenuOn = false;
+        powerButtonDown = false;
+        idlePowerOffShutdown();
+      }
+      if (tap && y0 >= 190 && y0 < 294 && x0 >= 244 && x0 < 428) {
+        powerMenuOn = false;
+        powerButtonDown = false;
+        gfx->fillScreen(C_BLACK);
+        printCentered("RESTARTING", CX, 220, 3, C_GREEN);
+        needFlush = true;
+        flushSync();
+        delay(120);
+        ESP.restart();
+      }
+      if (powerMenuOn && !tap) restoreAfterPowerMenu();
+      if (powerMenuOn && tap && !(y0 >= 190 && y0 < 294 &&
+          ((x0 >= 38 && x0 < 222) || (x0 >= 244 && x0 < 428)))) restoreAfterPowerMenu();
+      if (!powerMenuOn) touchEat = false;
+    }
+    return;
+  }
   if (n > 0) {
     if (!touchDown) {
       touchDown = true;

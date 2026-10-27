@@ -46,3 +46,7 @@ const int SDMMC_CLK = 2;
 const int SDMMC_CMD = 1;
 const int SDMMC_DATA = 3;
 const int SDMMC_CS = 41;
+
+// 1.75C: AXP2101 SYS_OUT follows the physical PWR key on GPIO3.
+// MotoNav does not use SDMMC, so this pin is available for the power-key menu.
+#define PWR_BUTTON_PIN 3
