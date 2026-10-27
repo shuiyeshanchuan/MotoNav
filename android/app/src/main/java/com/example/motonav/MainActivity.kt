@@ -27,6 +27,8 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.FileProvider
+import java.io.File
 
 /**
  * MotoNav 手机 App
@@ -146,7 +148,7 @@ import androidx.appcompat.app.AppCompatActivity
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.34"
+const val APP_VERSION = "v8.3.35"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（罪恶都市夜景：深紫黑底、霓虹粉、青色） ----------------
@@ -176,6 +178,10 @@ class MainActivity : AppCompatActivity() {
     private var onlineOtaCandidate: FirmwareUpdateClient.Candidate? = null
     private var onlineOtaBusy = false
     private var otaVerificationVersion: String? = null
+    private var appUpdateStatusView: TextView? = null
+    private var appUpdateButton: TextView? = null
+    private var appUpdateBusy = false
+    private var pendingAppInstall: File? = null
 
     private companion object {
         const val PICK_OTA_MANIFEST = 4101
@@ -265,6 +271,7 @@ class MainActivity : AppCompatActivity() {
             3 -> {
                 content.addView(statusCard())
                 settingsBody { screenSection(it) }
+                content.addView(section("about", "ⓘ", "关于 MotoNav", { "当前 $APP_VERSION · 检查 App 更新" }) { aboutSection(it) })
                 devWrap = section("dev", "🛠", "开发者选项", { "调试信息、测试按钮、屏幕速度、地图来源" }) { devSection(it) }.apply {
                     visibility = if (uiPrefs.getBoolean("dev_mode", false)) View.VISIBLE else View.GONE
                 }
@@ -1439,6 +1446,85 @@ class MainActivity : AppCompatActivity() {
         toast(if (on) "已打开开发者选项（圆屏设置页底部）" else "已隐藏开发者选项")
     }
 
+    /** About MotoNav: check the official GitHub Release and hand the APK to Android's installer. */
+    private fun aboutSection(card: LinearLayout) {
+        card.addView(settingRow("当前版本", "已安装的 MotoNav App 版本", label(APP_VERSION, 14f, TEXT, bold = true)))
+        card.addView(divider())
+        val status = label("可检查 GitHub 正式版更新", 12f, SUB).apply {
+            setLineSpacing(0f, 1.15f)
+            setPadding(0, dp(6), 0, dp(8))
+        }
+        val update = pillButton("检查版本更新", PURPLE) { checkAppUpdate() }
+        card.addView(update, lpMatch(top = 4, bottom = 4))
+        card.addView(status)
+        appUpdateStatusView = status
+        appUpdateButton = update
+    }
+
+    private fun checkAppUpdate() {
+        if (appUpdateBusy) return
+        appUpdateBusy = true
+        appUpdateButton?.apply { isEnabled = false; alpha = 0.55f; text = "正在检查…" }
+        appUpdateStatusView?.text = "正在检查 GitHub 最新正式版…"
+        Thread {
+            try {
+                val candidate = AppUpdateClient.check()
+                if (!AppUpdateClient.isNewer(candidate.version, APP_VERSION)) {
+                    runOnUiThread { finishAppUpdateCheck("当前已是最新版本 $APP_VERSION") }
+                    return@Thread
+                }
+                runOnUiThread { appUpdateStatusView?.text = "发现新版本 ${candidate.version}，正在下载…" }
+                val apk = AppUpdateClient.download(this, candidate) { read, total ->
+                    val percent = if (total > 0) read * 100 / total else 0
+                    runOnUiThread { appUpdateStatusView?.text = "正在下载 App 更新：$percent%" }
+                }
+                val installedVersion = AppUpdateClient.verify(this, apk, candidate.version)
+                runOnUiThread {
+                    appUpdateBusy = false
+                    appUpdateButton?.apply { isEnabled = true; alpha = 1f; text = "安装新版本 $installedVersion" }
+                    appUpdateStatusView?.text = "下载完成，正在打开系统安装确认…"
+                    openSystemInstaller(apk)
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    finishAppUpdateCheck("检查或下载失败：${e.message ?: "网络或安装包异常"}")
+                }
+            }
+        }.start()
+    }
+
+    private fun finishAppUpdateCheck(message: String) {
+        appUpdateBusy = false
+        appUpdateButton?.apply { isEnabled = true; alpha = 1f; text = "检查版本更新" }
+        appUpdateStatusView?.text = message
+    }
+
+    private fun openSystemInstaller(apk: File) {
+        if (!apk.exists()) {
+            finishAppUpdateCheck("安装包不存在，请重新检查更新")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            pendingAppInstall = apk
+            appUpdateStatusView?.text = "请允许 MotoNav 安装未知应用，返回后会自动打开安装确认"
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            } catch (_: Exception) {
+                startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
+            }
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.updates", apk)
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+        } catch (e: Exception) {
+            finishAppUpdateCheck("无法打开系统安装器：${e.message ?: "请手动安装下载的 APK"}")
+        }
+    }
+
     /** 开发者选项：地图来源、屏幕速度、测试按钮、各种状态和原始数据 */
     private fun devSection(card: LinearLayout) {
         // 状态（原来首页上的小地图行、帧率）
@@ -1780,6 +1866,12 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (searchInput?.text.isNullOrBlank()) refreshHomeIdle?.invoke()     // v6.3 选路线页回来：更新“最近去过”
+        pendingAppInstall?.let { apk ->
+            if (apk.exists() && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || packageManager.canRequestPackageInstalls())) {
+                pendingAppInstall = null
+                handler.post { openSystemInstaller(apk) }
+            }
+        }
     }
 
     @Deprecated("使用旧式文件选择器以兼容当前项目的最低 Android 版本")
