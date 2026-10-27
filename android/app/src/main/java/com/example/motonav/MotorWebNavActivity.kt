@@ -93,8 +93,7 @@ class MotorWebNavActivity : AppCompatActivity() {
         }
         root.addView(map,FrameLayout.LayoutParams(-1,-1))
         root.addView(View(this).apply{
-            background=GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.parseColor("#990E0A14"),Color.TRANSPARENT))
+            background=null
             importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
         },FrameLayout.LayoutParams(-1,dp(170),Gravity.TOP))
         buildTurnCard();buildSpeed();buildBottomCard();buildArrived()
@@ -284,9 +283,9 @@ class MotorWebNavActivity : AppCompatActivity() {
             val near=g.direction!="S" && g.turnMeters in 0..100 && !g.arrived
             if(near!=nearShown){
                 nearShown=near
-                arrowBox.background=if(near)GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                    intArrayOf(S.AMBER,Color.parseColor("#FF7A3D"))).apply{cornerRadius=S.dp(this@MotorWebNavActivity,18f)}
+                arrowBox.background=if(near)S.round(this@MotorWebNavActivity,S.CARD2,18f)
                     else S.gradient(this@MotorWebNavActivity,18f)
+                arrow.color=if(near)S.AMBER else S.PINK
             }
             val normal=g.status.startsWith("网页摩托车")
             val state=if(normal){if(g.simulation){if(g.paused)"模拟已暂停" else "模拟导航"}else"摩托车导航"}else g.status

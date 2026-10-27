@@ -168,8 +168,7 @@ class RoutePlanActivity : AppCompatActivity() {
         setupMap()
 
         scrim = View(this).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.parseColor("#E60E0A14"), Color.TRANSPARENT))
+            background = null
         }
         root.addView(scrim, FrameLayout.LayoutParams(-1, dp(90)))
 
@@ -683,7 +682,7 @@ class RoutePlanActivity : AppCompatActivity() {
         })
         // 开始导航
         startBtn = TextView(this).apply {
-            text = "开始导航"; textSize = 18f; setTextColor(Color.WHITE); typeface = S.BOLD
+            text = "开始导航"; textSize = 18f; setTextColor(S.PINK); typeface = S.BOLD
             letterSpacing = 0.08f; gravity = Gravity.CENTER
             background = S.gradient(this@RoutePlanActivity, 16f)
             setOnClickListener { startNav() }

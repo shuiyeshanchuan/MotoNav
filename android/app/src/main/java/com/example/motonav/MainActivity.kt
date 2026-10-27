@@ -148,21 +148,21 @@ import java.io.File
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.35"
+const val APP_VERSION = "v8.3.36"
 
 class MainActivity : AppCompatActivity() {
-    // ---------------- 配色（罪恶都市夜景：深紫黑底、霓虹粉、青色） ----------------
-    private val BG = Color.parseColor("#0E0A14")
-    private val CARD = Color.parseColor("#1A1424")
-    private val STROKE = Color.parseColor("#2C2338")
-    private val TEXT = Color.parseColor("#F3EEF8")
-    private val SUB = Color.parseColor("#9D93AB")
-    private val PINK = Color.parseColor("#FF4FB4")
-    private val PURPLE = Color.parseColor("#8E5CFF")
-    private val CYAN = Color.parseColor("#43E1F0")
-    private val GREEN = Color.parseColor("#3DDC84")
-    private val AMBER = Color.parseColor("#FFB547")
-    private val RED = Color.parseColor("#FF5A6A")
+    // ---------------- 配色（Neumorphism：同色表面 + 左上亮/右下暗） ----------------
+    private val BG = Color.parseColor("#E0E5EC")
+    private val CARD = Color.parseColor("#E0E5EC")
+    private val STROKE = Color.parseColor("#B8BCC2")
+    private val TEXT = Color.parseColor("#333333")
+    private val SUB = Color.parseColor("#6B7280")
+    private val PINK = Color.parseColor("#6D5DFC")
+    private val PURPLE = Color.parseColor("#6D5DFC")
+    private val CYAN = Color.parseColor("#4ECDC4")
+    private val GREEN = Color.parseColor("#4ECDC4")
+    private val AMBER = Color.parseColor("#FFE66D")
+    private val RED = Color.parseColor("#FF6B6B")
 
     private val handler = Handler(Looper.getMainLooper())
     private val refreshers = ArrayList<() -> Unit>()       // 每 0.2 秒刷新一次的界面元素
@@ -177,6 +177,7 @@ class MainActivity : AppCompatActivity() {
     private var onlineOtaUpdateButton: TextView? = null
     private var onlineOtaCandidate: FirmwareUpdateClient.Candidate? = null
     private var onlineOtaBusy = false
+    private var onlineOtaMessage = "连接圆屏后可检查更新"
     private var otaVerificationVersion: String? = null
     private var appUpdateStatusView: TextView? = null
     private var appUpdateButton: TextView? = null
@@ -190,6 +191,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun dpf(v: Float) = v * resources.displayMetrics.density
+
+    /** Keeps the firmware-update message independent from the page that happens to display it. */
+    private fun publishOtaState(message: String? = null) {
+        if (message != null) onlineOtaMessage = message
+        AppStatus.updateOta(onlineOtaBusy, onlineOtaMessage, onlineOtaCandidate?.version)
+        onlineOtaStatusView?.text = onlineOtaMessage
+    }
+
+    private fun setOtaStatus(message: String) = publishOtaState(message)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -245,7 +255,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(20))
         }
-        val titles = listOf("首页搜索", "圆屏显示", "导航语音", "圆屏设置", "地图 Key")
+        val titles = listOf("导航", "设备", "语音", "设置", "更多")
         content.addView(pageHeader(if (index == 0) "MotoNav" else titles[index]))
         fun settingsBody(build: (LinearLayout) -> Unit) {
             val box = card(); build(box); content.addView(wrapMargin(box))
@@ -253,15 +263,13 @@ class MainActivity : AppCompatActivity() {
         when (index) {
             0 -> {
                 content.addView(cruiseCard())
-                content.addView(homeConnection())
                 content.addView(searchCard())
-                content.addView(setupCard())
-                content.addView(rideCard())
             }
             1 -> {
-                val summary = label("", 13f, SUB).apply { setPadding(dp(4), 0, 0, dp(14)) }
-                content.addView(summary); refreshers += { summary.text = mapSummary() }
-                settingsBody { mapSection(it) }
+                content.addView(statusCard())
+                content.addView(setupCard())
+                content.addView(section("screen", "◉", "圆屏设置", { screenSummary() }) { screenSection(it) })
+                content.addView(section("firmware", "↑", "圆屏固件更新", { firmwareSummary() }, forceOpen = true) { firmwareUpdateSection(it) })
             }
             2 -> {
                 val summary = label("", 13f, SUB).apply { setPadding(dp(4), 0, 0, dp(14)) }
@@ -269,16 +277,24 @@ class MainActivity : AppCompatActivity() {
                 settingsBody { voiceSection(it) }
             }
             3 -> {
-                content.addView(statusCard())
-                settingsBody { screenSection(it) }
+                settingsBody { mapSection(it) }
+                settingsBody { keySection(it) }
+                content.addView(rideCard())
                 content.addView(section("about", "ⓘ", "关于 MotoNav", { "当前 $APP_VERSION · 检查 App 更新" }) { aboutSection(it) })
-                devWrap = section("dev", "🛠", "开发者选项", { "调试信息、测试按钮、屏幕速度、地图来源" }) { devSection(it) }.apply {
+            }
+            4 -> {
+                content.addView(label("普通使用不需要进入这里。开发者诊断、测试和手动 OTA 文件入口统一放在高级设置。", 12f, SUB).apply {
+                    setPadding(dp(4), 0, dp(4), dp(12))
+                })
+                devWrap = section("advanced", "⚙", "高级设置", { "诊断、测试和手动 OTA" }) { devSection(it) }.apply {
                     visibility = if (uiPrefs.getBoolean("dev_mode", false)) View.VISIBLE else View.GONE
                 }
                 content.addView(devWrap)
+                content.addView(label("连续点击页面顶部的版本号 5 次，可显示或隐藏高级设置。", 12f, SUB).apply {
+                    setPadding(dp(4), dp(2), dp(4), dp(8))
+                })
                 content.addView(exitButton())
             }
-            4 -> settingsBody { keySection(it) }
         }
         val callbacks = refreshers.subList(firstCallback, refreshers.size)
         pageRefreshers[index].addAll(callbacks.toList()); callbacks.clear()
@@ -291,35 +307,11 @@ class MainActivity : AppCompatActivity() {
         addView(label(title, 25f, if (title == "MotoNav") PINK else TEXT, bold = true).apply {
             if (title == "MotoNav") {
                 typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD_ITALIC)
-                setShadowLayer(dpf(7f), 0f, 0f, CYAN)
             }
         })
         addView(label((if (packageName.endsWith(".fresh")) "新签名版" else "网页摩托实验") + " · $APP_VERSION", 11f, SUB).apply {
             setPadding(0, dp(3), 0, 0); setOnClickListener { onVersionTap() }
         })
-    }
-
-    private fun homeConnection(): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), 0, dp(4), dp(10)); minimumHeight = dp(40)
-        }
-        val dot = View(this).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(SUB) }
-        }
-        row.addView(dot, LinearLayout.LayoutParams(dp(7), dp(7)).apply { rightMargin = dp(8) })
-        val state = label("", 12f, SUB).apply { isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END }
-        row.addView(state, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(label("圆屏设置 ›", 12f, CYAN))
-        row.setOnClickListener { mainPages.showPage(3) }
-        refreshers += {
-            val ready = BleLink.isConnected && BleLink.verified
-            setDot(dot, if (ready) GREEN else AMBER)
-            state.text = if (ready) BleLink.screenName.ifBlank { "圆屏" } + " 已连接" +
-                (if (BleLink.screenBatteryPct >= 0) " · ${BleLink.screenBatteryPct}%" else "")
-                else if (BleLink.isConnected) "圆屏正在验证配对" else "圆屏未连接"
-        }
-        return row
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -330,7 +322,7 @@ class MainActivity : AppCompatActivity() {
 
     // ================= 页面各部分 =================
 
-    /** 顶部标题：霓虹粉斜体 MotoNav，带青色光晕 */
+    /** 旧首页标题组件，保留给兼容入口使用。 */
     private fun header(): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(4), dp(4), 0, dp(14))
@@ -340,7 +332,6 @@ class MainActivity : AppCompatActivity() {
             setTextColor(PINK)
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD_ITALIC)
             letterSpacing = 0.04f
-            setShadowLayer(dpf(10f), 0f, 0f, CYAN)
         })
         addView(TextView(context).apply {
             text = "圆屏导航 · App $APP_VERSION"
@@ -403,7 +394,7 @@ class MainActivity : AppCompatActivity() {
             setSingleLine(true)
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             setPadding(dp(16), 0, dp(16), 0)
-            background = GradientDrawable().apply { setColor(BG); cornerRadius = dpf(14f) }
+            Neumorphic.applyRecessed(this, 14f)
         }
         searchInput = input
         val go = pillButton("搜索", PINK) { homeSearchNow() }.apply { textSize = 16f }
@@ -562,7 +553,7 @@ class MainActivity : AppCompatActivity() {
         val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
         val t = try { cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString() } catch (_: Exception) { null }
         if (AmapShare.findUrl(t) == null) {
-            android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+            android.app.AlertDialog.Builder(this)
                 .setMessage("剪贴板里没有高德的分享链接。\n\n在高德 App 里规划好路线 → 分享 → 复制链接（或直接分享给 MotoNav），再回来点这里。")
                 .setPositiveButton("知道了", null).show()
             return
@@ -607,9 +598,9 @@ class MainActivity : AppCompatActivity() {
         row.addView(cruise, LinearLayout.LayoutParams(dp(88), dp(44)))
         card.addView(row)
         refreshers += {
-            val on = NaviBridge.cruising
+            val on = AppStatus.navigation().cruising
             cruise.text = if (on) "结束" else "开始"
-            (cruise.background as? GradientDrawable)?.setColor(if (on) Color.parseColor("#2A7F88") else Color.parseColor("#36B8C6"))
+            cruise.setTextColor(if (on) RED else CYAN)
         }
         return wrapMargin(card)
     }
@@ -628,7 +619,7 @@ class MainActivity : AppCompatActivity() {
         val bat = TextView(this).apply {
             textSize = 13f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER
             setPadding(dp(10), dp(4), dp(10), dp(4))
-            background = GradientDrawable().apply { setColor(BG); cornerRadius = dpf(12f) }
+            Neumorphic.applyRecessed(this, 12f)
         }
         top.addView(bat, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(8) })
         top.setOnClickListener {                          // v6.9 旧配对对不上时：点一下打开系统蓝牙设置
@@ -656,37 +647,25 @@ class MainActivity : AppCompatActivity() {
         val offlineLabel=label("",12f,SUB).apply { setPadding(dp(24),dp(6),0,0); maxLines=2 }
         card.addView(offlineLabel)
         refreshers += {
-            val conn = BleLink.isConnected
-            val searching = BleLink.status.contains("搜索") || BleLink.status.contains("连接…") || BleLink.status.contains("正在")
-            setDot(dot, if (conn && BleLink.verified) GREEN else if (conn || searching) AMBER else RED)
-            title.text = when {
-                conn && BleLink.verified -> BleLink.screenName.ifEmpty { "圆屏" } + " 已连接"
-                conn -> "正在确认圆屏配对…"
-                searching -> BleLink.status
-                else -> "圆屏未连接"
-            }
-            sub.setTextColor(if (BleLink.needUnbond) AMBER else SUB)
-            sub.text = when {
-                BleLink.pairHint.isNotEmpty() && !BleLink.verified -> BleLink.pairHint      // v6.4 配对提示
-                conn && BleLink.verified -> "已配对验证"
-                conn -> "正在验证配对…"
-                else -> BleLink.status
-            }
-            val pct = BleLink.screenBatteryPct
-            bat.visibility = if (conn && pct >= 0) View.VISIBLE else View.GONE
+            val device = AppStatus.device()
+            val navigation = AppStatus.navigation()
+            setDot(dot, if (device.connected && device.verified) GREEN else if (device.connected || device.searching) AMBER else RED)
+            title.text = device.title
+            sub.setTextColor(if (device.needsSystemUnpair) AMBER else SUB)
+            sub.text = device.detail
+            val pct = device.batteryPercent
+            bat.visibility = if (device.connected && pct >= 0) View.VISIBLE else View.GONE
             if (pct >= 0) {
-                val chg = BleLink.screenBattery.contains("⚡")
+                val chg = device.batteryCharging
                 bat.text = (if (chg) "⚡ " else "") + "$pct%"
                 bat.setTextColor(if (chg) CYAN else if (pct > 50) GREEN else if (pct >= 15) AMBER else RED)
             }
-            reconnect.visibility = if (conn) View.GONE else View.VISIBLE
+            reconnect.visibility = if (device.connected) View.GONE else View.VISIBLE
 
-            val navActive = NaviBridge.lastInfo.startsWith("图标")
-            val cruising = NaviBridge.cruising
-            navBox.visibility = if (navActive || cruising) View.VISIBLE else View.GONE
-            setDot(navDot, if (navActive) PINK else CYAN)
-            navTitle.text = if (navActive) "导航中" else "巡航中"
-            navSub.text = if (navActive) (NaviBridge.extraInfo.lineSequence().lastOrNull()?.removePrefix("底部：") ?: "") else "提醒测速、电子眼和危险路段"
+            navBox.visibility = if (navigation.navigating || navigation.cruising) View.VISIBLE else View.GONE
+            setDot(navDot, if (navigation.navigating) PINK else CYAN)
+            navTitle.text = navigation.title
+            navSub.text = navigation.detail
 
             offlineLabel.text=MapFeeder.offlineStatus()
             offlineLabel.visibility=if (offlineLabel.text.isEmpty()) View.GONE else View.VISIBLE
@@ -859,7 +838,7 @@ class MainActivity : AppCompatActivity() {
         sys.addView(settingRow("语音引擎", null, textLink("更换") {
             val list = NaviVoice.engines()
             if (list.isEmpty()) { toast("手机上没找到语音引擎，请先到应用商店安装一个"); return@textLink }
-            android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+            android.app.AlertDialog.Builder(this)
                 .setTitle("选择语音引擎")
                 .setItems(list.map { it.second }.toTypedArray()) { _, i -> NaviVoice.setEngine(list[i].first) { toast("已切换：${list[i].second}") } }
                 .show()
@@ -870,7 +849,7 @@ class MainActivity : AppCompatActivity() {
             val vs = NaviVoice.zhVoices()
             if (vs.isEmpty()) { toast("这个引擎里没有中文声音（或还在准备中），换个引擎试试"); return@textLink }
             val names = arrayOf("引擎默认") + vs.map { NaviVoice.voiceLabel(it) }.toTypedArray()
-            android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+            android.app.AlertDialog.Builder(this)
                 .setTitle("选择声音（${vs.size} 个中文声音）")
                 .setItems(names) { _, i -> NaviVoice.setVoice(if (i == 0) "" else vs[i - 1].name); NaviVoice.test() }
                 .show()
@@ -937,7 +916,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showThemePicker() {
-        val dlg = android.app.Dialog(this, android.R.style.Theme_DeviceDefault_NoActionBar)
+        val dlg = android.app.Dialog(this)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BG)
@@ -954,11 +933,8 @@ class MainActivity : AppCompatActivity() {
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val cards = HashMap<Int, LinearLayout>()
         fun styleCard(c: LinearLayout, selected: Boolean) {
-            c.background = GradientDrawable().apply {
-                setColor(if (selected) Color.parseColor("#2A1830") else CARD)
-                cornerRadius = dpf(18f)
-                setStroke(if (selected) dp(2) else dp(1), if (selected) PINK else STROKE)
-            }
+            c.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+            c.background = if (selected) Neumorphic.recessed(this, 18f) else Neumorphic.raised(this, 18f)
         }
         val order = MapFeeder.THEME_ORDER
         var row: LinearLayout? = null
@@ -1037,7 +1013,7 @@ class MainActivity : AppCompatActivity() {
     private fun screenSection(card: LinearLayout) {
         val bootSub = label("", 12f, SUB)
         card.addView(settingRow("开机动画 · 摩托车品牌", null, textLink("选择") {
-            android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+            android.app.AlertDialog.Builder(this)
                 .setTitle("选择圆屏开机品牌")
                 .setSingleChoiceItems(BootBrand.labels, BootBrand.selected) { dialog, which ->
                     BootBrand.select(which)
@@ -1127,7 +1103,7 @@ class MainActivity : AppCompatActivity() {
             "圆屏只听配对过的手机。加新手机：重启圆屏，2 分钟内连接并输入配对码",
             textLink("忘掉其他手机") {
                 if (!BleLink.verified) { toast("先连上圆屏并通过验证再点"); return@textLink }
-                android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+                android.app.AlertDialog.Builder(this)
                     .setTitle("让圆屏忘掉其他手机？")
                     .setMessage("除了现在连着的这台，圆屏记住的其他手机都会被忘掉，它们以后要重新配对。\n\n手机丢了、换了手机时用新手机点一下。")
                     .setPositiveButton("忘掉") { _, _ -> BleLink.forgetOthers(); toast("已让圆屏忘掉其他手机") }
@@ -1139,12 +1115,15 @@ class MainActivity : AppCompatActivity() {
         card.addView(settingRow("连哪块圆屏",
             "App 优先连上次那块；身边有几块圆屏、想连另一块时点「换一块」。编号在圆屏首页下方",
             textLink("换一块") { BleLink.switchScreen(this); toast("正在找另一块圆屏…") }))
-        card.addView(divider())
+    }
+
+    /** Ordinary firmware update flow. Diagnostics and local file picking stay in advanced settings. */
+    private fun firmwareUpdateSection(card: LinearLayout) {
         card.addView(subhead("圆屏固件更新"))
-        card.addView(note("通过 GitHub 稳定版检查、下载并校验签名固件；全程不需要电脑或文件管理器。请停车后、保持手机靠近圆屏并接入稳定电源。"))
+        card.addView(note("检查、下载和验证均在 App 内完成，不需要电脑或文件管理器。请停车后保持手机靠近圆屏，并接入稳定电源。"))
         val check = pillButton("检查稳定版更新", PURPLE) { checkGithubOta() }
         val update = pillButton("立即更新圆屏", PINK) { confirmGithubOta() }.apply { visibility = View.GONE }
-        val status = label("连接圆屏后可检查更新", 12f, SUB).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) }
+        val status = label(AppStatus.ota().message, 12f, SUB).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) }
         card.addView(check, lpMatch(top = 10, bottom = 6))
         card.addView(update, lpMatch(bottom = 4))
         card.addView(status)
@@ -1156,11 +1135,21 @@ class MainActivity : AppCompatActivity() {
     private fun screenSummary(): String =
         "亮度" + (if (Brightness.auto) "自动" else "手动") + " · 方向 ${MapFeeder.screenDeg}° · 来电显示" + (if (CallWatcher.enabled) "开" else "关")
 
+    private fun firmwareSummary(): String {
+        val state = AppStatus.ota()
+        return when {
+            state.busy -> "正在处理更新"
+            state.availableVersion != null -> "可更新至 ${state.availableVersion}"
+            BleLink.screenFirmware.isNotBlank() -> "当前 ${BleLink.screenFirmware}"
+            else -> "连接圆屏后检查稳定版"
+        }
+    }
+
     /** GitHub Release → checked package → the existing signed BLE OTA transport. */
     private fun checkGithubOta() {
         if (onlineOtaBusy) return
         if (!BleLink.isConnected || !BleLink.verified) {
-            onlineOtaStatusView?.text = "请先连接并完成圆屏配对，再检查更新"
+            setOtaStatus("请先连接并完成圆屏配对，再检查更新")
             return
         }
         onlineOtaBusy = true
@@ -1168,7 +1157,7 @@ class MainActivity : AppCompatActivity() {
         onlineOtaCheckButton?.apply { isEnabled = false; alpha = 0.55f; text = "正在检查…" }
         onlineOtaUpdateButton?.visibility = View.GONE
         BleLink.refreshDeviceStatus()
-        onlineOtaStatusView?.text = "正在读取圆屏状态…"
+        setOtaStatus("正在读取圆屏状态…")
         waitForDeviceStatus()
     }
 
@@ -1177,7 +1166,7 @@ class MainActivity : AppCompatActivity() {
         if (!BleLink.isConnected || !BleLink.verified) {
             onlineOtaBusy = false
             onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
-            onlineOtaStatusView?.text = "圆屏连接已中断，请连接并完成配对后再检查更新"
+            setOtaStatus("圆屏连接已中断，请连接并完成配对后再检查更新")
             return
         }
         val board = BleLink.screenBoard
@@ -1189,15 +1178,15 @@ class MainActivity : AppCompatActivity() {
         if (attempt >= 10) {
             onlineOtaBusy = false
             onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
-            onlineOtaStatusView?.text = "圆屏已连接，但暂未读到完整设备信息，请稍后重试"
+            setOtaStatus("圆屏已连接，但暂未读到完整设备信息，请稍后重试")
             return
         }
-        onlineOtaStatusView?.text = "正在读取圆屏状态…（${attempt + 1}/10）"
+        setOtaStatus("正在读取圆屏状态…（${attempt + 1}/10）")
         handler.postDelayed({ waitForDeviceStatus(attempt + 1) }, 500)
     }
 
     private fun runGithubOtaCheck(board: String) {
-        onlineOtaStatusView?.text = "正在检查 GitHub 稳定版…"
+        setOtaStatus("正在检查 GitHub 稳定版…")
         Thread {
             try {
                 val candidate = FirmwareUpdateClient.check(board)
@@ -1207,31 +1196,31 @@ class MainActivity : AppCompatActivity() {
                     when {
                         legacyBridge && candidate.version == "v7.12.9-power.15" -> {
                             onlineOtaCandidate = candidate
-                            onlineOtaStatusView?.text = buildString {
+                            setOtaStatus(buildString {
                                 append("发现稳定版 ${candidate.version}（当前 .14 兼容升级）")
                                 append("\n\n本次升级会修复旧固件的 OTA 状态上报；完成后，后续更新可直接一键进行。")
                                 if (candidate.notes.isNotBlank()) append("\n\n").append(candidate.notes)
-                            }
+                            })
                             onlineOtaUpdateButton?.apply { text = "更新至 ${candidate.version}"; visibility = View.VISIBLE }
                         }
                         current.isBlank() || !Regex("""^v\d+\.\d+\.\d+(?:[-._][A-Za-z0-9._-]+)?$""").matches(current) ->
-                            onlineOtaStatusView?.text = "还没有读到圆屏完整固件版本，请等待“设备”诊断信息完整后再检查"
-                        candidate.version == current -> onlineOtaStatusView?.text = "已是最新稳定版：$current"
+                            setOtaStatus("还没有读到圆屏完整固件版本，请等待“设备”诊断信息完整后再检查")
+                        candidate.version == current -> setOtaStatus("已是最新稳定版：$current")
                         !FirmwareUpdateClient.isNotOlder(candidate.version, current) ->
-                            onlineOtaStatusView?.text = "当前圆屏版本 $current 比 GitHub 稳定版更新，不降级"
+                            setOtaStatus("当前圆屏版本 $current 比 GitHub 稳定版更新，不降级")
                         else -> {
                             onlineOtaCandidate = candidate
-                            onlineOtaStatusView?.text = buildString {
+                            setOtaStatus(buildString {
                                 append("发现稳定版 ${candidate.version}")
                                 if (current.isNotBlank()) append("（当前 $current）")
                                 if (candidate.notes.isNotBlank()) append("\n\n").append(candidate.notes)
-                            }
+                            })
                             onlineOtaUpdateButton?.apply { text = "更新至 ${candidate.version}"; visibility = View.VISIBLE }
                         }
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread { onlineOtaStatusView?.text = "检查更新失败：${e.message ?: "网络或发布信息异常"}" }
+                runOnUiThread { setOtaStatus("检查更新失败：${e.message ?: "网络或发布信息异常"}") }
             } finally {
                 runOnUiThread {
                     onlineOtaBusy = false
@@ -1244,7 +1233,7 @@ class MainActivity : AppCompatActivity() {
     private fun confirmGithubOta() {
         val candidate = onlineOtaCandidate ?: return
         if (onlineOtaBusy) return
-        android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+        android.app.AlertDialog.Builder(this)
             .setTitle("更新圆屏固件？")
             .setMessage("将从 GitHub 下载已签名的 ${candidate.version}，再通过蓝牙更新圆屏。\n\n请确认已停车、手机和圆屏保持靠近，且诊断页显示“OTA 电源条件 满足”。")
             .setNegativeButton("取消", null)
@@ -1256,16 +1245,16 @@ class MainActivity : AppCompatActivity() {
         onlineOtaBusy = true
         onlineOtaCheckButton?.apply { isEnabled = false; alpha = 0.55f }
         onlineOtaUpdateButton?.apply { isEnabled = false; alpha = 0.55f }
-        onlineOtaStatusView?.text = "正在下载并校验 ${candidate.version}…"
+        setOtaStatus("正在下载并校验 ${candidate.version}…")
         Thread {
             try {
                 BleLink.otaBlockReason()?.let { error("设备暂不可升级：$it") }
                 val pkg = FirmwareUpdateClient.downloadPackage(candidate) { text ->
-                    runOnUiThread { onlineOtaStatusView?.text = text }
+                    runOnUiThread { setOtaStatus(text) }
                 }
                 runOnUiThread {
-                    onlineOtaStatusView?.text = "文件校验通过，正在请求圆屏升级…"
-                    if (!startOtaPackage(pkg) { onlineOtaStatusView?.text = it }) {
+                    setOtaStatus("文件校验通过，正在请求圆屏升级…")
+                    if (!startOtaPackage(pkg) { setOtaStatus(it) }) {
                         onlineOtaBusy = false
                         onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f }
                         onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
@@ -1276,7 +1265,7 @@ class MainActivity : AppCompatActivity() {
                     onlineOtaBusy = false
                     onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f }
                     onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
-                    onlineOtaStatusView?.text = "下载或校验失败：${e.message ?: "网络或文件异常"}"
+                    setOtaStatus("下载或校验失败：${e.message ?: "网络或文件异常"}")
                 }
             }
         }.start()
@@ -1321,10 +1310,10 @@ class MainActivity : AppCompatActivity() {
                 onlineOtaBusy = false
                 onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
                 onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
-                onlineOtaStatusView?.text = "圆屏已连接，但暂未读到更新后的版本；请稍后点“检查稳定版更新”确认"
+                setOtaStatus("圆屏已连接，但暂未读到更新后的版本；请稍后点“检查稳定版更新”确认")
                 return
             }
-            onlineOtaStatusView?.text = "圆屏已连接，正在读取更新后的版本…（${connectedAttempt + 1}/10）"
+            setOtaStatus("圆屏已连接，正在读取更新后的版本…（${connectedAttempt + 1}/10）")
             handler.postDelayed({ waitForOtaReboot(expectedVersion, attempt + 1, connectedAttempt + 1) }, 1000)
             return
         }
@@ -1333,15 +1322,15 @@ class MainActivity : AppCompatActivity() {
             onlineOtaBusy = false
             onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
             onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
-            onlineOtaStatusView?.text = "固件已写入，但 60 秒内未确认圆屏重连；请保持圆屏靠近手机后再检查"
+            setOtaStatus("固件已写入，但 60 秒内未确认圆屏重连；请保持圆屏靠近手机后再检查")
             return
         }
-        onlineOtaStatusView?.text = "圆屏正在重启，等待重新连接…（${attempt + 1}/60）"
+        setOtaStatus("圆屏正在重启，等待重新连接…（${attempt + 1}/60）")
         handler.postDelayed({ waitForOtaReboot(expectedVersion, attempt + 1, 0) }, 1000)
     }
 
     private fun confirmOtaReboot(expectedVersion: String) {
-        onlineOtaStatusView?.text = "圆屏已重新连接，正在确认 GitHub 稳定版…"
+        setOtaStatus("圆屏已重新连接，正在确认 GitHub 稳定版…")
         Thread {
             try {
                 val latest = FirmwareUpdateClient.check(BleLink.screenBoard)
@@ -1353,7 +1342,7 @@ class MainActivity : AppCompatActivity() {
                     if (latest.version == expectedVersion) {
                         onlineOtaCandidate = null
                         onlineOtaUpdateButton?.visibility = View.GONE
-                        onlineOtaStatusView?.text = "更新完成：圆屏已重启并重新连接，当前已是最新稳定版 $expectedVersion"
+                        setOtaStatus("更新完成：圆屏已重启并重新连接，当前已是最新稳定版 $expectedVersion")
                     } else {
                         onlineOtaCandidate = latest
                         onlineOtaUpdateButton?.apply {
@@ -1362,7 +1351,7 @@ class MainActivity : AppCompatActivity() {
                             isEnabled = true
                             alpha = 1f
                         }
-                        onlineOtaStatusView?.text = "更新完成：当前圆屏版本 $expectedVersion；发现新的稳定版 ${latest.version}"
+                        setOtaStatus("更新完成：当前圆屏版本 $expectedVersion；发现新的稳定版 ${latest.version}")
                     }
                 }
             } catch (e: Exception) {
@@ -1371,7 +1360,7 @@ class MainActivity : AppCompatActivity() {
                     otaVerificationVersion = null
                     onlineOtaBusy = false
                     onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
-                    onlineOtaStatusView?.text = "圆屏已重启并连接，当前版本已确认为 $expectedVersion；稳定版检查失败，可稍后重试"
+                    setOtaStatus("圆屏已重启并连接，当前版本已确认为 $expectedVersion；稳定版检查失败，可稍后重试")
                 }
             }
         }.start()
@@ -1401,10 +1390,16 @@ class MainActivity : AppCompatActivity() {
     private fun showWeatherConfig() {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), dp(8)) }
         box.addView(label("和风控制台 → 设置 → API Host；项目 → 凭据 → API Key。普通天气不再请求高德天气或 Open-Meteo。", 13f, SUB))
-        val host = EditText(this).apply { hint = "xxxx.qweatherapi.com"; setText(Weather.host()); setSingleLine(true) }
+        val host = EditText(this).apply {
+            hint = "xxxx.qweatherapi.com"; setText(Weather.host()); setSingleLine(true)
+            setTextColor(TEXT); setHintTextColor(SUB); setPadding(dp(14), dp(4), dp(14), dp(4))
+            Neumorphic.applyRecessed(this, 12f)
+        }
         val key = EditText(this).apply {
             hint = "和风 API Key"; setText(Weather.key()); setSingleLine(true)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setTextColor(TEXT); setHintTextColor(SUB); setPadding(dp(14), dp(4), dp(14), dp(4))
+            Neumorphic.applyRecessed(this, 12f)
         }
         box.addView(host); box.addView(key)
         box.addView(label("四类权限：天气预报、分钟降水、空气质量、天气预警。只启用实际使用的服务，按账号额度计费。数据来源：和风天气 QWeather。", 12f, SUB))
@@ -1442,8 +1437,8 @@ class MainActivity : AppCompatActivity() {
         val on = !uiPrefs.getBoolean("dev_mode", false)
         uiPrefs.edit().putBoolean("dev_mode", on).apply()
         devWrap?.visibility = if (on) View.VISIBLE else View.GONE
-        if (on) mainPages.showPage(3)
-        toast(if (on) "已打开开发者选项（圆屏设置页底部）" else "已隐藏开发者选项")
+        if (on) mainPages.showPage(4)
+        toast(if (on) "已打开高级设置" else "已隐藏高级设置")
     }
 
     /** About MotoNav: check the official GitHub Release and hand the APK to Android's installer. */
@@ -1627,6 +1622,8 @@ class MainActivity : AppCompatActivity() {
             setTextColor(TEXT)
             setHintTextColor(SUB)
             typeface = Typeface.MONOSPACE
+            setPadding(dp(14), dp(4), dp(14), dp(4))
+            Neumorphic.applyRecessed(this, 12f)
         }
         if (first) {
             val missing = listOfNotNull(if (!Keys.hasAmap(this)) "高德 key" else null)
@@ -1646,7 +1643,7 @@ class MainActivity : AppCompatActivity() {
         val amapIn = input("粘贴高德 key", Keys.userAmap(this))
         box.addView(amapIn, lpMatch(top = 6, bottom = 14))
 
-        android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+        android.app.AlertDialog.Builder(this)
             .setTitle(if (first) "填写地图 key" else "Key 设置")
             .setView(ScrollView(this).apply { addView(box) })
             .setNegativeButton(if (first) "稍后再填" else "取消", null)
@@ -1655,7 +1652,7 @@ class MainActivity : AppCompatActivity() {
                 val needRestart = Keys.save(this, a)
                 MapFeeder.onKeysChanged()
                 if (needRestart && Keys.hasAmap(this)) {
-                    android.app.AlertDialog.Builder(this, android.app.AlertDialog.THEME_DEVICE_DEFAULT_DARK)
+                    android.app.AlertDialog.Builder(this)
                         .setTitle("高德 key 已保存")
                         .setMessage("要重新打开一次 App，导航、搜索才会用上新的 key。")
                         .setPositiveButton("现在重启") { _, _ -> Keys.restartApp(this) }
@@ -1674,16 +1671,13 @@ class MainActivity : AppCompatActivity() {
             setTextColor(SUB)
             gravity = Gravity.CENTER
             setPadding(0, dp(14), 0, dp(14))
-            background = GradientDrawable().apply {
-                cornerRadius = dpf(14f)
-                setStroke(dp(1), STROKE)
-            }
             setOnClickListener { Toast.makeText(this@MainActivity, "防误触：请长按退出", Toast.LENGTH_SHORT).show() }
             setOnLongClickListener {
                 NavService.stop(this@MainActivity)
                 finishAndRemoveTask()
                 true
             }
+            Neumorphic.applyRaised(this, 14f, interactive = true)
         }
         return FrameLayout(this).apply {
             setPadding(0, dp(18), 0, 0)
@@ -1696,11 +1690,7 @@ class MainActivity : AppCompatActivity() {
     private fun card(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(16), dp(14), dp(16), dp(14))
-        background = GradientDrawable().apply {
-            setColor(CARD)
-            cornerRadius = dpf(18f)
-            setStroke(dp(1), STROKE)
-        }
+        Neumorphic.applyRaised(this, 20f)
     }
 
     private fun wrapMargin(v: View): View = FrameLayout(this).apply {
@@ -1716,17 +1706,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sectionTitle(t: String) = TextView(this).apply {
-        text = t.uppercase()
+        text = t
         textSize = 12f
         setTextColor(PINK)
         typeface = Typeface.DEFAULT_BOLD
-        letterSpacing = 0.2f
+        letterSpacing = 0.04f
         setPadding(dp(6), dp(8), 0, dp(8))
     }
 
     private fun divider(top: Int = 10): View = View(this).apply {
-        setBackgroundColor(STROKE)
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(top); bottomMargin = dp(2) }
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(top); bottomMargin = dp(2) }
     }
 
     private fun lpMatch(top: Int = 0, bottom: Int = 0) =
@@ -1737,22 +1726,25 @@ class MainActivity : AppCompatActivity() {
     private fun pillButton(t: String, color: Int, onClick: () -> Unit) = TextView(this).apply {
         text = t
         textSize = 15f
-        setTextColor(Color.WHITE)
+        setTextColor(color)
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         includeFontPadding = false
         setPadding(dp(12), 0, dp(12), 0)               // v3.6 上下不留内边距，按钮高度由外面定，字不会被切掉
         minHeight = dp(40)
-        background = GradientDrawable().apply { setColor(color); cornerRadius = dpf(14f) }
         setOnClickListener { onClick() }
+        Neumorphic.applyRaised(this, 14f, interactive = true)
     }
 
     private fun textLink(t: String, onClick: () -> Unit) = TextView(this).apply {
         text = t
         textSize = 13f
-        setTextColor(CYAN)
-        setPadding(0, dp(6), dp(6), dp(2))
+        setTextColor(PURPLE)
+        gravity = Gravity.CENTER
+        minHeight = dp(38)
+        setPadding(dp(10), dp(4), dp(10), dp(4))
         setOnClickListener { onClick() }
+        Neumorphic.applyRaised(this, 12f, interactive = true)
     }
 
     private fun setDot(v: View, color: Int) {
@@ -1798,14 +1790,14 @@ class MainActivity : AppCompatActivity() {
     /** 开关（自己画的胶囊开关，配色统一） */
     private fun toggle(get: () -> Boolean, onChange: (Boolean) -> Unit): View {
         val track = FrameLayout(this)
-        val knob = View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) } }
+        val knob = View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(BG) } }
         track.addView(knob, FrameLayout.LayoutParams(dp(22), dp(22)).apply { topMargin = dp(3) })
-        val bg = GradientDrawable().apply { cornerRadius = dpf(14f) }
-        track.background = bg
+        Neumorphic.applyRecessed(track, 14f)
+        knob.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         track.layoutParams = LinearLayout.LayoutParams(dp(50), dp(28)).apply { leftMargin = dp(12) }
         fun paint() {
             val on = get()
-            bg.setColor(if (on) PINK else STROKE)
+            knob.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (on) PINK else BG) }
             (knob.layoutParams as FrameLayout.LayoutParams).leftMargin = if (on) dp(25) else dp(3)
             knob.requestLayout()
         }
@@ -1820,18 +1812,17 @@ class MainActivity : AppCompatActivity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(3), dp(3), dp(3), dp(3))
-            background = GradientDrawable().apply { setColor(BG); cornerRadius = dpf(14f); setStroke(dp(1), STROKE) }
+            Neumorphic.applyRecessed(this, 14f)
         }
         val items = ArrayList<Pair<Int, TextView>>()
         fun paint() {
             val cur = get()
             for ((v, tv) in items) {
                 val sel = v == cur
-                tv.setTextColor(if (sel) Color.WHITE else SUB)
+                tv.setTextColor(if (sel) PINK else SUB)
                 tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                tv.background = if (sel) GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(PINK, PURPLE)).apply {
-                    cornerRadius = dpf(11f)
-                } else null
+                tv.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                tv.background = if (sel) Neumorphic.recessed(this@MainActivity, 11f) else Neumorphic.raised(this@MainActivity, 11f)
             }
         }
         for ((v, name) in options) {
@@ -1853,6 +1844,7 @@ class MainActivity : AppCompatActivity() {
     // ================= 刷新 =================
 
     private fun refresh() {
+        publishOtaState()
         for (r in refreshers) r()
         if (::mainPages.isInitialized) pageRefreshers[mainPages.selectedPage].forEach { it() }
         if (::pvRaw.isInitialized && pvRaw.isShown && MapFeeder.previewVer != shownPv) {

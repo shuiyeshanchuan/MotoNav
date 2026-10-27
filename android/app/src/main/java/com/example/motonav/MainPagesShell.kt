@@ -24,7 +24,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
                      private val build:(Int)->View, private val onSelected:(Int)->Unit):LinearLayout(activity) {
     private val S=NavStyle
     private fun dp(v:Int)=S.dpi(activity,v)
-    private val titles=listOf("首页搜索","圆屏显示","导航语音","圆屏设置","地图 Key")
+    private val titles=listOf("导航","设备","语音","设置","更多")
     private val host=FrameLayout(activity)
     private val pages=arrayOfNulls<ScrollView>(5)
     private val restoreY=saved?.getIntArray("main_page_scroll")?.takeIf{it.size==5} ?: IntArray(5)
@@ -39,8 +39,8 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
         WindowCompat.setDecorFitsSystemWindows(activity.window,false)
         addView(host,LayoutParams(-1,0,1f))
         val navigation=LinearLayout(activity).apply {
-            orientation=HORIZONTAL;setPadding(dp(5),dp(5),dp(5),dp(5));setBackgroundColor(S.CARD_SOLID)
-            elevation=S.dp(activity,10f)
+            orientation=HORIZONTAL;setPadding(dp(5),dp(5),dp(5),dp(5))
+            Neumorphic.applyRaised(this, 18f)
         }
         titles.forEachIndexed { index,title ->
             val tab=LinearLayout(activity).apply {
@@ -83,7 +83,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
             val selected=i==index;tab.isSelected=selected
             labels[i].setTextColor(if(selected)S.PINK else S.SUB)
             labels[i].typeface=if(selected)S.BOLD else S.MEDIUM
-            indicators[i].background=if(selected)S.round(activity,0xFF351E38.toInt(),14f) else null
+            indicators[i].background=if(selected) Neumorphic.recessed(activity,14f) else null
             icons[i].active=selected
         }
         onSelected(index)
@@ -106,14 +106,13 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
             fun line(x1:Float,y1:Float,x2:Float,y2:Float)=canvas.drawLine(x1,y1,x2,y2,paint)
             when(index) {
                 0->{
-                    canvas.drawPath(Path().apply{moveTo(3f,10f);lineTo(12f,3f);lineTo(21f,10f)},paint)
-                    canvas.drawPath(Path().apply{moveTo(6f,9f);lineTo(6f,21f);lineTo(18f,21f);lineTo(18f,9f)},paint)
-                    canvas.drawPath(Path().apply{moveTo(10f,21f);lineTo(10f,14f);lineTo(14f,14f);lineTo(14f,21f)},paint)
+                    canvas.drawCircle(12f,12f,9f,paint)
+                    canvas.drawPath(Path().apply{moveTo(7f,13f);lineTo(12f,8f);lineTo(17f,13f);moveTo(12f,8f);lineTo(12f,18f)},paint)
                 }
                 1->{
                     canvas.drawCircle(12f,12f,9f,paint)
-                    canvas.drawPath(Path().apply{moveTo(7f,16f);lineTo(10f,13f);lineTo(14f,14f);lineTo(17f,8f)},paint)
-                    canvas.drawCircle(17f,8f,1f,paint)
+                    canvas.drawCircle(12f,12f,2f,paint)
+                    canvas.drawPath(Path().apply{moveTo(12f,3f);lineTo(12f,6f);moveTo(12f,18f);lineTo(12f,21f)},paint)
                 }
                 2->{
                     canvas.drawPath(Path().apply{moveTo(4f,9f);lineTo(8f,9f);lineTo(12f,5f);lineTo(12f,19f);lineTo(8f,15f);lineTo(4f,15f);close()},paint)
@@ -125,8 +124,9 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
                     repeat(8){val a=it*Math.PI/4;line((12+6.5*cos(a)).toFloat(),(12+6.5*sin(a)).toFloat(),(12+9*cos(a)).toFloat(),(12+9*sin(a)).toFloat())}
                 }
                 4->{
-                    canvas.drawCircle(8f,8f,4.5f,paint);line(11f,11f,21f,21f)
-                    line(16f,16f,19f,13f);line(19f,19f,22f,16f)
+                    paint.style=Paint.Style.FILL
+                    canvas.drawCircle(6f,12f,1.7f,paint);canvas.drawCircle(12f,12f,1.7f,paint);canvas.drawCircle(18f,12f,1.7f,paint)
+                    paint.style=Paint.Style.STROKE
                 }
             }
             canvas.restore()

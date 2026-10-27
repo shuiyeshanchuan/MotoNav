@@ -1,12 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MotoNav 主题：深紫黑底（罪恶都市夜景配色），不要系统标题栏 -->
+<!-- MotoNav 主题：Neumorphism 浅灰表面，不要系统标题栏 -->
 <resources>
-    <style name="Theme.MotoNav" parent="Theme.AppCompat.NoActionBar">
-        <item name="colorPrimary">#FF4FB4</item>
-        <item name="colorPrimaryDark">#0E0A14</item>
-        <item name="colorAccent">#43E1F0</item>
-        <item name="android:windowBackground">#0E0A14</item>
-        <item name="android:statusBarColor">#0E0A14</item>
-        <item name="android:navigationBarColor">#0E0A14</item>
+    <style name="Theme.MotoNav" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">#6D5DFC</item>
+        <item name="colorPrimaryDark">#E0E5EC</item>
+        <item name="colorAccent">#6D5DFC</item>
+        <item name="android:windowBackground">#E0E5EC</item>
+        <item name="android:statusBarColor">#E0E5EC</item>
+        <item name="android:navigationBarColor">#E0E5EC</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="alertDialogTheme">@style/Theme.MotoNav.Dialog</item>
+    </style>
+
+    <style name="Theme.MotoNav.Dialog" parent="Theme.AppCompat.Light.Dialog.Alert">
+        <item name="android:colorBackground">#E0E5EC</item>
+        <item name="android:windowBackground">#E0E5EC</item>
+        <item name="colorAccent">#6D5DFC</item>
     </style>
 </resources>

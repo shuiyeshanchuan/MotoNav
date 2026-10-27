@@ -126,10 +126,9 @@ class NavActivity : AppCompatActivity() {
             } catch (_: Throwable) {}
         }
 
-        // 顶部一条渐暗，让卡片和地图分开
+        // 地图保持原样；新拟物卡片自身负责层次，不再叠加渐变遮罩
         root.addView(View(this).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(Color.parseColor("#990E0A14"), Color.TRANSPARENT))
+            background = null
         }, FrameLayout.LayoutParams(-1, dp(150)))
 
         buildTurnCard()
@@ -311,7 +310,7 @@ class NavActivity : AppCompatActivity() {
         // 车速
         speedBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(S.CARD); setStroke(dp(2), S.STROKE) }
+            background = Neumorphic.raised(this@NavActivity, 30f)
             elevation = S.dp(this@NavActivity, 8f)
         }
         speedNum = TextView(this).apply {
@@ -514,9 +513,8 @@ class NavActivity : AppCompatActivity() {
             val near = dir != "S" && B.uiDist in 0..100
             if (near != nearShown) {
                 nearShown = near
-                arrowBox.background = if (near) GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
-                    intArrayOf(S.AMBER, Color.parseColor("#FF7A3D"))).apply { cornerRadius = S.dp(this@NavActivity, 18f) }
-                else S.gradient(this, 18f)
+                arrowBox.background = if (near) S.round(this, S.CARD2, 18f) else S.gradient(this, 18f)
+                arrow.color = if (near) S.AMBER else S.PINK
             }
             val (num, unit) = S.distParts(B.uiDist)
             val sp = SpannableString("$num $unit")

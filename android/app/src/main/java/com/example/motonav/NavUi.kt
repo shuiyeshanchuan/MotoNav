@@ -20,24 +20,24 @@ import kotlin.math.sin
  * 版本：跟随 App 版本，见 MainActivity.kt 里的 APP_VERSION（v3.0 新增）
  *
  * 自己的导航界面（选路线页、导航页）共用的配色和小部件：
- * - NavStyle：罪恶都市风配色（和主界面一致）、圆角卡片、渐变按钮
+ * - NavStyle：Neumorphism 浅色配色、圆角卡片和统一强调色
  * - TurnArrowView：转向箭头（角度跟随路口实际角度，和圆屏一样）
  * - LaneView：车道指示
  */
 object NavStyle {
-    val BG = Color.parseColor("#0E0A14")
-    val CARD = Color.parseColor("#F21A1424")        // 浮在地图上的卡片（略透明）
-    val CARD_SOLID = Color.parseColor("#1A1424")
-    val CARD2 = Color.parseColor("#251C33")
-    val STROKE = Color.parseColor("#3A2E4C")
-    val TEXT = Color.parseColor("#F3EEF8")
-    val SUB = Color.parseColor("#A79DB6")
-    val PINK = Color.parseColor("#FF4FB4")
-    val PURPLE = Color.parseColor("#8E5CFF")
-    val CYAN = Color.parseColor("#43E1F0")
-    val AMBER = Color.parseColor("#FFB547")
-    val RED = Color.parseColor("#FF4D5E")
-    val GREEN = Color.parseColor("#3DDC84")
+    val BG = Color.parseColor("#E0E5EC")
+    val CARD = Color.parseColor("#E0E5EC")
+    val CARD_SOLID = Color.parseColor("#E0E5EC")
+    val CARD2 = Color.parseColor("#D1D9E6")
+    val STROKE = Color.parseColor("#B8BCC2")
+    val TEXT = Color.parseColor("#333333")
+    val SUB = Color.parseColor("#6B7280")
+    val PINK = Color.parseColor("#6D5DFC")
+    val PURPLE = Color.parseColor("#6D5DFC")
+    val CYAN = Color.parseColor("#4ECDC4")
+    val AMBER = Color.parseColor("#FFE66D")
+    val RED = Color.parseColor("#FF6B6B")
+    val GREEN = Color.parseColor("#4ECDC4")
 
     val NUM: Typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
     val BOLD: Typeface = Typeface.create("sans-serif", Typeface.BOLD)
@@ -54,10 +54,11 @@ object NavStyle {
             if (strokeColor != 0) setStroke(max(1, dp(ctx, strokeDp).toInt()), strokeColor)
         }
 
-    /** 粉→紫渐变按钮背景 */
-    fun gradient(ctx: Context, radiusDp: Float) = GradientDrawable(
-        GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(PINK, PURPLE)
-    ).apply { cornerRadius = dp(ctx, radiusDp) }
+    /** Kept as a compatibility helper for navigation screens; Soft UI uses a solid surface. */
+    fun gradient(ctx: Context, radiusDp: Float) = GradientDrawable().apply {
+        setColor(BG)
+        cornerRadius = dp(ctx, radiusDp)
+    }
 
     /** 秒 → “1小时5分” / “25分钟” */
     fun durText(s: Int): String {
