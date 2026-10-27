@@ -146,7 +146,7 @@ import androidx.appcompat.app.AppCompatActivity
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.31"
+const val APP_VERSION = "v8.3.32"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（罪恶都市夜景：深紫黑底、霓虹粉、青色） ----------------
@@ -175,6 +175,7 @@ class MainActivity : AppCompatActivity() {
     private var onlineOtaUpdateButton: TextView? = null
     private var onlineOtaCandidate: FirmwareUpdateClient.Candidate? = null
     private var onlineOtaBusy = false
+    private var otaVerificationVersion: String? = null
 
     private companion object {
         const val PICK_OTA_MANIFEST = 4101
@@ -1251,12 +1252,74 @@ class MainActivity : AppCompatActivity() {
             override fun onState(text: String) = runOnUiThread { show(text) }
             override fun onProgress(sent: Int, total: Int) = runOnUiThread { show("OTA 传输中：$sent / $total 字节") }
             override fun onFinished(success: Boolean, message: String) = runOnUiThread {
-                onlineOtaBusy = false
-                onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f }
-                onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
-                show((if (success) "完成：" else "失败：") + message)
+                if (success) {
+                    // OTA,DONE only means the signed image was accepted and the
+                    // device is rebooting. Confirm the new firmware after BLE
+                    // reconnect before telling the user the update is complete.
+                    otaVerificationVersion = pkg.version
+                    onlineOtaCheckButton?.apply { isEnabled = false; alpha = 0.55f }
+                    onlineOtaUpdateButton?.apply { isEnabled = false; alpha = 0.55f; visibility = View.GONE }
+                    show("固件已写入，圆屏正在重启；等待重新连接并确认版本…")
+                    waitForOtaReboot(pkg.version)
+                } else {
+                    onlineOtaBusy = false
+                    onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f }
+                    onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
+                    show("失败：$message")
+                }
             }
         })
+
+    private fun waitForOtaReboot(expectedVersion: String, attempt: Int = 0) {
+        if (otaVerificationVersion != expectedVersion) return
+        if (BleLink.isConnected && BleLink.verified && BleLink.screenFirmware == expectedVersion) {
+            onlineOtaStatusView?.text = "圆屏已重新连接，正在确认 GitHub 稳定版…"
+            Thread {
+                try {
+                    val latest = FirmwareUpdateClient.check(BleLink.screenBoard)
+                    runOnUiThread {
+                        if (otaVerificationVersion != expectedVersion) return@runOnUiThread
+                        otaVerificationVersion = null
+                        onlineOtaBusy = false
+                        onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+                        if (latest.version == expectedVersion) {
+                            onlineOtaCandidate = null
+                            onlineOtaUpdateButton?.visibility = View.GONE
+                            onlineOtaStatusView?.text = "更新完成：圆屏已重启并重新连接，当前已是最新稳定版 $expectedVersion"
+                        } else {
+                            onlineOtaCandidate = latest
+                            onlineOtaUpdateButton?.apply {
+                                text = "更新至 ${latest.version}"
+                                visibility = View.VISIBLE
+                                isEnabled = true
+                                alpha = 1f
+                            }
+                            onlineOtaStatusView?.text = "更新完成：当前圆屏版本 $expectedVersion；发现新的稳定版 ${latest.version}"
+                        }
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        if (otaVerificationVersion != expectedVersion) return@runOnUiThread
+                        otaVerificationVersion = null
+                        onlineOtaBusy = false
+                        onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+                        onlineOtaStatusView?.text = "圆屏已重启并连接，当前版本已确认为 $expectedVersion；稳定版检查失败，可稍后重试"
+                    }
+                }
+            }.start()
+            return
+        }
+        if (attempt >= 60) {
+            otaVerificationVersion = null
+            onlineOtaBusy = false
+            onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+            onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
+            onlineOtaStatusView?.text = "固件已写入，但 60 秒内未确认圆屏重连；请保持圆屏靠近手机后再检查"
+            return
+        }
+        onlineOtaStatusView?.text = "圆屏正在重启，等待重新连接…（${attempt + 1}/60）"
+        handler.postDelayed({ waitForOtaReboot(expectedVersion, attempt + 1) }, 1000)
+    }
 
     /** v6.2 Key 设置：显示两个 key 填没填，点「填写 / 修改」弹出填写页 */
     private fun keySection(card: LinearLayout) {
