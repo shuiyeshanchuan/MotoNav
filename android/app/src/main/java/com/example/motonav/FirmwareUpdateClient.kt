@@ -72,7 +72,12 @@ object FirmwareUpdateClient {
         return pkg
     }
 
-    /** Candidate may share a numeric release prefix but have a newer build label, such as power.13 → power.14. */
+    /**
+     * Candidate may share a numeric release prefix but have a newer build label,
+     * such as power.13 → power.14. The release channel is a build label rather
+     * than a semver pre-release, so power/junction/nav builds with the same
+     * numeric prefix are mutually upgradeable.
+     */
     fun isNotOlder(candidate: String, current: String): Boolean {
         return current.isBlank() || compareVersions(candidate, current) >= 0
     }
@@ -83,6 +88,8 @@ object FirmwareUpdateClient {
         if (l.tail == r.tail) return 0
         if (l.channel == r.channel && l.build != null && r.build != null)
             return l.build.compareTo(r.build)
+        if (l.channel.isNotBlank() && r.channel.isNotBlank() && l.channel != r.channel)
+            return 0
         return l.tail.compareTo(r.tail)
     }
 

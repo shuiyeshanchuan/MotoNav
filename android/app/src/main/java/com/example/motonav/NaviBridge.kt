@@ -47,6 +47,7 @@ import kotlin.math.roundToInt
  * - v4.5 按导入的分享路线导航时，偏航重算交给 ShareGuide 再按原路线规划一次
  * - v4.7 巡航模式（startCruise/stopCruise）；道路安全提示（交通设施回调）和电子眼一起发给圆屏
  * - v4.9 重新规划中 "#y"、GPS 信号弱 "#x"、更快路线 "#h"（导航页可一键切换）、路况颜色 "#u"
+ * - v8.3.38 导航可读性：后续两步转弯摘要 "#a"、分段距离和导航数据更新时间
  */
 object NaviBridge {
     @Volatile var lastInfo = "（还没开始导航）"
@@ -60,6 +61,12 @@ object NaviBridge {
     @Volatile var uiDist = -1                 // 离路口距离（米，已推算平滑）
     @Volatile var uiNextRoad = ""
     @Volatile var uiCurRoad = ""
+    @Volatile var uiNextTurnDir = ""
+    @Volatile var uiNextTurnDist = -1
+    @Volatile var uiNextTurnRoad = ""
+    @Volatile var uiAfterNextTurnDir = ""
+    @Volatile var uiAfterNextTurnDist = -1
+    @Volatile var uiAfterNextTurnRoad = ""
     @Volatile var uiRemainM = 0
     @Volatile var uiRemainS = 0
     @Volatile var uiLights = 0
@@ -77,6 +84,7 @@ object NaviBridge {
     @Volatile var directRouteMode = LocalRouting.DRIVE
     @Volatile var realWaypoints = false
     @Volatile var uiHasInfo = false           // 已经收到过导航信息
+    @Volatile var uiLastInfoAt = 0L           // 最近一次收到高德导航信息的单调时钟
     @Volatile var uiLightDist = -1            // v3.1 前方红绿灯距离（米，-1 = 300 米内没有）
     /** 算路结果回调（选路线页面设置）：成功与否、高德给的结果对象 */
     @Volatile var routeCallback: ((Boolean, Any?) -> Unit)? = null
@@ -115,6 +123,7 @@ object NaviBridge {
     // ---- v1.7 行车信息 ----
     private var lastSpeedMsg = ""
     private var lastCamMsg = ""
+    private var lastNextTurnMsg = ""
     private var lastCamAt = 0L
     // v1.7.1 正在跟踪的测速点
     private var camLimit = 0
@@ -305,13 +314,15 @@ object NaviBridge {
         shownDir = ""; shownDist = -1
         lastUpdateAt = 0L; lastGap = 0.0
         lastSent = ""
-        lastSpeedMsg = ""; lastCamMsg = ""; lastCamAt = 0L; lastLaneMsg = ""
+        lastSpeedMsg = ""; lastCamMsg = ""; lastNextTurnMsg = ""; lastCamAt = 0L; lastLaneMsg = ""
         camLimit = 0; camMinDist = Int.MAX_VALUE
         lastRoadText = ""; lastBottomText = ""
         extraInfo = ""
         uiDir = ""; uiAngle = null; uiDist = -1; uiNextRoad = ""; uiCurRoad = ""
+        uiNextTurnDir = ""; uiNextTurnDist = -1; uiNextTurnRoad = ""
+        uiAfterNextTurnDir = ""; uiAfterNextTurnDist = -1; uiAfterNextTurnRoad = ""
         uiRemainM = 0; uiRemainS = 0; uiLights = 0; uiCamLimit = 0; uiCamDist = 0
-        uiLanes = IntArray(0); uiArrived = false; uiHasInfo = false
+        uiLanes = IntArray(0); uiArrived = false; uiHasInfo = false; uiLastInfoAt = 0L
         lastTripMsg = ""; lastLightMsg = ""; lightBase = -1; lightAt = 0L; uiLightDist = -1
         rerouting = false; gpsWeakSent = false; lastTrafficMsg = ""; lastTrafficAt = 0L    // v4.9
         suggestNewId = null; uiSuggestMin = 0
@@ -320,6 +331,51 @@ object NaviBridge {
     }
 
     // ================= 转向和距离 =================
+
+    private data class UpcomingTurn(val dir: String, val dist: Int, val road: String)
+
+    private fun isTurn(dir: String): Boolean = dir == "L" || dir == "R" ||
+        dir == "SL" || dir == "SR" || dir == "U"
+
+    /** 从当前路段之后找两次真正的转向，直行段只累计距离不占用提示位。 */
+    private fun upcomingTurns(step: Int, currentRemain: Int): List<UpcomingTurn> {
+        val steps = try { navi?.naviPath?.steps ?: return emptyList() } catch (_: Exception) { return emptyList() }
+        if (step < 0 || step >= steps.size) return emptyList()
+        val out = ArrayList<UpcomingTurn>(2)
+        var distance = currentRemain.coerceAtLeast(0)
+        for (i in step + 1 until steps.size) {
+            distance += steps[i].length.coerceAtLeast(0)
+            val dir = iconToDir(steps[i].iconType)
+            if (!isTurn(dir)) continue
+            val road = steps[i].links.asSequence()
+                .mapNotNull { it.roadName?.trim() }
+                .firstOrNull { it.isNotEmpty() }
+                .orEmpty()
+            out += UpcomingTurn(dir, distance, road)
+            if (out.size == 2) break
+        }
+        return out
+    }
+
+    private fun pushNextTurns(turns: List<UpcomingTurn>) {
+        val first = turns.getOrNull(0)
+        val second = turns.getOrNull(1)
+        uiNextTurnDir = first?.dir.orEmpty()
+        uiNextTurnDist = first?.dist ?: -1
+        uiNextTurnRoad = first?.road.orEmpty()
+        uiAfterNextTurnDir = second?.dir.orEmpty()
+        uiAfterNextTurnDist = second?.dist ?: -1
+        uiAfterNextTurnRoad = second?.road.orEmpty()
+        val message = if (first == null) {
+            "#a"
+        } else {
+            "#a,${first.dir},${first.dist},${second?.dir.orEmpty()},${second?.dist ?: -1}"
+        }
+        if (message != lastNextTurnMsg) {
+            lastNextTurnMsg = message
+            BleLink.send(message)
+        }
+    }
 
     /** 高德给了一次导航信息（切到主线程处理） */
     private fun onNaviInfo(info: NaviInfo, epoch: Long) {
@@ -372,10 +428,11 @@ object NaviBridge {
             pushNav(curDir, max(0, (raw - speed * leadS()).roundToInt()), fromRealData = true)   // v7.2 真实数据也加提前量
             updateTexts(curDir, curRoad, nextRoad, remainM, remainS, lights)
             uiAngle = curAngle; uiNextRoad = nextRoad; uiCurRoad = curRoad          // v3.0
+            pushNextTurns(upcomingTurns(step, raw))
             lightBase = nextLightDist(step, Refl.int(info, "getCurLink"), raw) ?: -1  // v3.1
             lightAt = t
             pushLight(lightBase)
-            uiRemainM = remainM; uiRemainS = remainS; uiLights = lights; uiHasInfo = true
+            uiRemainM = remainM; uiRemainS = remainS; uiLights = lights; uiHasInfo = true; uiLastInfoAt = t
             if (!active) {
                 active = true
                 if (tripStartAt == 0L) tripStartAt = SystemClock.elapsedRealtime()   // v7.9
@@ -452,6 +509,7 @@ object NaviBridge {
             handler.removeCallbacks(tick)
             lastInfo = info
             shownDir = ""; shownDist = -1
+            pushNextTurns(emptyList())
             send(msg)
         }
     }

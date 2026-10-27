@@ -73,13 +73,27 @@ object NavStyle {
         else -> "${m}米"
     }
 
+    /**
+     * 转向距离按骑行时的阅读节奏取整：近处保留实际米数，之后逐步变成 10/50/100 米档。
+     * 这样数字不会因为 GPS 的小幅抖动连续跳变，也不会让远处距离显示得过细。
+     */
+    private fun navigationMeters(m: Int): Int = when {
+        m < 0 -> m
+        m < 20 -> m
+        m < 100 -> (m + 5) / 10 * 10
+        m < 1000 -> (m + 25) / 50 * 50
+        else -> (m + 50) / 100 * 100
+    }
+
     /** 转向距离：数字和单位分开（大数字 + 小单位） */
-    fun distParts(m: Int): Pair<String, String> = when {
-        m < 0 -> "--" to ""
-        m >= 10_000 -> "${m / 1000}" to "公里"
-        m >= 1000 -> "%.1f".format(m / 1000.0) to "公里"
-        m >= 100 -> "${(m + 5) / 10 * 10}" to "米"
-        else -> "$m" to "米"
+    fun distParts(m: Int): Pair<String, String> {
+        val value = navigationMeters(m)
+        return when {
+            value < 0 -> "--" to ""
+            value >= 10_000 -> "${value / 1000}" to "公里"
+            value >= 1000 -> "%.1f".format(value / 1000.0) to "公里"
+            else -> "$value" to "米"
+        }
     }
 }
 

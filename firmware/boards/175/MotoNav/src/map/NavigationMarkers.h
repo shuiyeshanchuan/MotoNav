@@ -188,6 +188,14 @@ void drawNavHints(int bannerY) {
   unsigned long now = millis();
   if (rerouteAt && now - rerouteAt > 20000) rerouteAt = 0;        // 最多显示 20 秒
   if (fasterAt && now - fasterAt > 30000) fasterAt = 0;           // 更快路线提示 30 秒
+  if (!rerouteAt && !fasterAt && nextNavDir.length() && nextNavDist >= 0) {
+    String t = "NXT " + nextNavDir + " " + distText(nextNavDist);
+    if (afterNextNavDir.length() && afterNextNavDist >= 0) t += "  THN " + afterNextNavDir + " " + distText(afterNextNavDist);
+    int size = t.length() <= 20 ? 2 : 1;
+    int w = t.length() * 6 * size + 20;
+    dimRect(CX - w / 2, bannerY - 6, w, size == 2 ? 24 : 18, 10, 68);
+    printCentered(t, CX, bannerY, size, C_CYAN);
+  }
   if (rerouteAt) {
     String dots = String("...").substring(0, 1 + (now / 400) % 3);
     drawBanner("REROUTING" + dots, bannerY, C_ORANGE);

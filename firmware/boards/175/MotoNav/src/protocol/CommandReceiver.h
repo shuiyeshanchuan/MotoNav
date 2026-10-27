@@ -6,6 +6,7 @@ void resetNavState() {
     idlePowerOffReset(&idlePowerOffTimer, millis());
   inNav = false;
   tripOn = false; lightDist = -1;                       // v3.1
+  nextNavDir = ""; nextNavDist = -1; afterNextNavDir = ""; afterNextNavDist = -1; // v8.3.38
   mapCamN = 0;                                          // v3.5
   ghostN = 0;                                           // v4.4
   cruiseOn = false;                                     // v4.8
@@ -120,6 +121,17 @@ void handleText(const String &m) {
   if (m == "C") { stopArriveFx(); progReset(); resetNavState(); drawWaiting(WAIT_READY); return; }
 
   if (m.startsWith("#v,")) { speedKmh = m.substring(3).toInt(); navDirty = true; return; }
+  if (m.startsWith("#a")) {                              // v8.3.38 后续两次转弯：#a,方向,距离,方向,距离
+    nextNavDir = ""; nextNavDist = -1; afterNextNavDir = ""; afterNextNavDist = -1;
+    int c1 = m.indexOf(','), c2 = m.indexOf(',', c1 + 1), c3 = m.indexOf(',', c2 + 1), c4 = m.indexOf(',', c3 + 1);
+    if (c1 > 0 && c2 > c1 && c3 > c2 && c4 > c3) {
+      nextNavDir = m.substring(c1 + 1, c2); nextNavDist = m.substring(c2 + 1, c3).toInt();
+      afterNextNavDir = m.substring(c3 + 1, c4); afterNextNavDist = m.substring(c4 + 1).toInt();
+      if (nextNavDir.length() == 0 || nextNavDist < 0) { nextNavDir = ""; nextNavDist = -1; }
+      if (afterNextNavDir.length() == 0 || afterNextNavDist < 0) { afterNextNavDir = ""; afterNextNavDist = -1; }
+    }
+    navDirty = true; return;
+  }
   if (m.startsWith("#k")) {
     int c1 = m.indexOf(','), c2 = m.indexOf(',', c1 + 1);
     if (c1 > 0 && c2 > c1) {

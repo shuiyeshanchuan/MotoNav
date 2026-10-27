@@ -231,7 +231,10 @@ void printCentered(const String &s, int x, int y, int size, uint16_t color) {
 }
 
 String distText(int m) {
-  return (m >= 1000) ? String(m / 1000.0, 1) + "km" : String(m) + "m";
+  if (m < 0) return "--";
+  // 导航距离按 10/50/100 米档显示，近处仍保留实际米数。
+  int shown = m < 20 ? m : m < 100 ? ((m + 5) / 10) * 10 : m < 1000 ? ((m + 25) / 50) * 50 : ((m + 50) / 100) * 100;
+  return (shown >= 1000) ? String(shown / 1000.0, 1) + "km" : String(shown) + "m";
 }
 
 // 画一条“先竖直向上、再圆滑地拐向 deg 方向”的粗线。

@@ -62,10 +62,13 @@ class NavActivity : AppCompatActivity() {
     private lateinit var arrow: TurnArrowView
     private lateinit var distText: TextView
     private lateinit var roadText: TextView
+    private lateinit var nextTurnText: TextView
+    private lateinit var afterNextTurnText: TextView
     private lateinit var laneView: LaneView
     private lateinit var laneBox: FrameLayout
     private lateinit var sideCol: LinearLayout
     private lateinit var speedNum: TextView
+    private lateinit var speedLimitText: TextView
     private lateinit var speedBox: LinearLayout
     private lateinit var camBox: LinearLayout
     private lateinit var camSign: TextView
@@ -290,10 +293,15 @@ class NavActivity : AppCompatActivity() {
         }
         roadText = TextView(this).apply {
             setTextColor(S.TEXT); typeface = S.MEDIUM; textSize = 17f; isSingleLine = true
-            ellipsize = TextUtils.TruncateAt.END; setPadding(0, dp(2), 0, 0)
+            ellipsize = TextUtils.TruncateAt.MARQUEE; marqueeRepeatLimit = -1; isSelected = true
+            setPadding(0, dp(2), 0, 0)
             text = "正在开始导航…"
         }
         col.addView(distText); col.addView(roadText)
+        nextTurnText = nextTurnLine()
+        afterNextTurnText = nextTurnLine()
+        col.addView(nextTurnText)
+        col.addView(afterNextTurnText)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         turnCard.addView(row)
         laneView = LaneView(this)
@@ -316,9 +324,14 @@ class NavActivity : AppCompatActivity() {
         speedNum = TextView(this).apply {
             setTextColor(S.TEXT); typeface = S.NUM; textSize = 22f; includeFontPadding = false; gravity = Gravity.CENTER; text = "--"
         }
+        speedLimitText = TextView(this).apply {
+            textSize = 10f; typeface = S.BOLD; gravity = Gravity.CENTER; includeFontPadding = false
+            setTextColor(S.SUB); visibility = View.GONE
+        }
         speedBox.addView(speedNum)
         speedBox.addView(TextView(this).apply { text = "km/h"; textSize = 9f; setTextColor(S.SUB); gravity = Gravity.CENTER })
-        sideCol.addView(speedBox, LinearLayout.LayoutParams(dp(60), dp(60)))
+        speedBox.addView(speedLimitText)
+        sideCol.addView(speedBox, LinearLayout.LayoutParams(dp(72), dp(74)))
         // 测速牌
         camBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; visibility = View.GONE }
         camSign = TextView(this).apply {
@@ -494,8 +507,16 @@ class NavActivity : AppCompatActivity() {
     }
 
     private fun update() {
-        mapStatus.text = MapFeeder.loadingStatus() + "\n" + if (emulate) "模拟导航 · 不记录轨迹" else RideRecorder.status()
         val B = NaviBridge
+        val linkReady = BleLink.isConnected && BleLink.verified
+        val guidanceState = when {
+            !linkReady -> "圆屏连接已断开"
+            !B.uiHasInfo -> "等待导航数据"
+            B.uiLastInfoAt > 0L && SystemClock.elapsedRealtime() - B.uiLastInfoAt > 3000L -> "导航数据暂无更新"
+            else -> "圆屏已连接 · 导航数据正常"
+        }
+        mapStatus.text = MapFeeder.loadingStatus() + "\n" + guidanceState + " · " +
+            if (emulate) "模拟导航 · 不记录轨迹" else RideRecorder.status()
         // v4.9 更快路线提示
         if (B.uiSuggestMin > 0) {
             suggestText.text = "发现更快的路线，能省约 ${B.uiSuggestMin} 分钟"
@@ -520,18 +541,23 @@ class NavActivity : AppCompatActivity() {
             val sp = SpannableString("$num $unit")
             sp.setSpan(AbsoluteSizeSpan(dp(17)), num.length, sp.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             distText.text = sp
-            roadText.text = when {
+            val road = when {
                 dir == "A" -> "前方终点 · ${destName.ifBlank { "目的地" }}"
                 dir == "S" && B.uiCurRoad.isNotBlank() -> "沿 ${B.uiCurRoad} 直行"
                 B.uiNextRoad.isNotBlank() -> "进入 ${B.uiNextRoad}"
                 else -> "前方路口"
             }
+            if (roadText.text.toString() != road) roadText.text = road
+            setTurnHint(nextTurnText, "下一步", B.uiNextTurnDir, B.uiNextTurnDist, B.uiNextTurnRoad)
+            setTurnHint(afterNextTurnText, "再下一步", B.uiAfterNextTurnDir, B.uiAfterNextTurnDist, B.uiAfterNextTurnRoad)
             remainText.text = "${S.distText(B.uiRemainM)} · ${S.durText(B.uiRemainS)}"
             val cal = Calendar.getInstance().apply { add(Calendar.SECOND, B.uiRemainS) }
             etaText.text = "%02d:%02d 到达".format(cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE)) +
                 (if (B.uiLights > 0) " · ${B.uiLights}个红绿灯" else "") + (if (emulate) " · 模拟" else "")
         } else {
             distText.text = ""
+            nextTurnText.visibility = View.GONE
+            afterNextTurnText.visibility = View.GONE
             remainText.text = if (emulate) "模拟导航准备中…" else "等待定位…"
             etaText.text = destName
         }
@@ -546,6 +572,9 @@ class NavActivity : AppCompatActivity() {
         speedNum.text = if (sp >= 0) "$sp" else "--"
         speedNum.setTextColor(if (over) S.RED else S.TEXT)
         (speedBox.background as? GradientDrawable)?.setStroke(dp(2), if (over) S.RED else S.STROKE)
+        speedLimitText.visibility = if (lim > 0) View.VISIBLE else View.GONE
+        speedLimitText.text = if (over) "超速 · 限速 $lim" else "限速 $lim"
+        speedLimitText.setTextColor(if (over) S.RED else S.SUB)
         val ld = B.uiLightDist
         if (ld >= 0) { lightChip.visibility = View.VISIBLE; lightChip.text = "红绿灯\n${(ld + 5) / 10 * 10}米" }
         else lightChip.visibility = View.GONE
@@ -555,6 +584,25 @@ class NavActivity : AppCompatActivity() {
             camSign.textSize = if (lim >= 100) 17f else 20f
             camDist.text = "${(B.uiCamDist + 5) / 10 * 10}米"
         } else camBox.visibility = View.GONE
+    }
+
+    private fun nextTurnLine(): TextView = TextView(this).apply {
+        textSize = 11.5f; typeface = S.MEDIUM; setTextColor(S.SUB); isSingleLine = true
+        ellipsize = TextUtils.TruncateAt.END; visibility = View.GONE; includeFontPadding = false
+        setPadding(0, dp(3), 0, 0)
+    }
+
+    private fun setTurnHint(view: TextView, prefix: String, dir: String, distance: Int, road: String) {
+        if (dir.isBlank() || distance < 0) { view.visibility = View.GONE; return }
+        val (num, unit) = S.distParts(distance)
+        val action = when (dir) {
+            "L" -> "左转"; "R" -> "右转"; "SL" -> "左前方"; "SR" -> "右前方"
+            "U" -> "掉头"; "S" -> "直行"; else -> "转弯"
+        }
+        val roadPart = road.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+        val value = "$prefix：$action · $num $unit$roadPart"
+        if (view.text.toString() != value) view.text = value
+        view.visibility = View.VISIBLE
     }
 
     // ================= 生命周期 =================

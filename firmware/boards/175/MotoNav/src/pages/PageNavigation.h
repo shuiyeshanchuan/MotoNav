@@ -370,6 +370,6 @@ void weatherTick() {
 
 void drawStaleOverlay() {
   drawRedRing();
-  printCentered("NO DATA", CX, 412, 3, C_RED);
+  printCentered(bleConnected && bleAuthed ? "NO NAV DATA" : "PHONE OFFLINE", CX, 412, 2, C_RED);
   needFlush = true;
 }

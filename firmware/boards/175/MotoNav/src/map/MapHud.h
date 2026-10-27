@@ -57,7 +57,7 @@ void drawMapSpeed(bool over) {
   if (speedKmh < 0) return;
   int sx = hasCam ? CX - 40 : CX;
   printOutlined(String(speedKmh), sx, 44, 4, over ? C_RED : TH.hud);
-  printOutlined("km/h", sx, 80, 1, over ? 0xFC10 : TH.hud);
+  printOutlined(over ? "OVER" : "km/h", sx, 80, 1, over ? C_RED : TH.hud);
   if (hasCam) {
     const int bx = CX + 52, by = 60;
     aaDisc(bx, by, 27, C_BLACK);

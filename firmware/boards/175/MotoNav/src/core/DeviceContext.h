@@ -123,6 +123,10 @@ bool inNav = false;           // 是否处于导航中
 String navDir = "";           // 当前方向
 int navDist = 0;              // 当前距离（米）
 float navAngle = NAN;         // v1.8 路口实际转弯角度；NAN = 没有，用标准角度
+String nextNavDir = "";        // v8.3.38 后续一次转弯摘要
+int nextNavDist = -1;
+String afterNextNavDir = "";   // v8.3.38 再下一次转弯摘要
+int afterNextNavDist = -1;
 unsigned long lastRxMs = 0;   // 最近一次收到任何消息的时间
 bool staleShown = false;      // 是否正在显示“数据中断”提示
 bool navDirty = false;        // 导航画面需要重画

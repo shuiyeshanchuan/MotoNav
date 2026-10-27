@@ -38,7 +38,7 @@ void drawSpeedBlock(bool over) {
   if (speedKmh < 0) return;
   int sx = hasCam ? 200 : CX;
   printCentered(String(speedKmh), sx, SPEED_Y, 5, over ? C_RED : C_WHITE);   // 每个字符 30x40
-  printCentered("km/h", sx, SPEED_Y + 46, 2, over ? 0xFC10 : C_GREY);
+  printCentered(over ? "OVER" : "km/h", sx, SPEED_Y + 46, over ? 1 : 2, over ? C_RED : C_GREY);
   if (hasCam) {
     const int bx = 298, by = 76;
     aaDisc(bx, by, 28, C_SIGNRED);
