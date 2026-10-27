@@ -81,9 +81,12 @@ object Neumorphic {
     fun raised(context: Context, radiusDp: Float = 18f) = NeumorphicDrawable(context, radiusDp)
     fun recessed(context: Context, radiusDp: Float = 14f) = NeumorphicDrawable(context, radiusDp, recessed = true)
 
-    fun applyRaised(view: View, radiusDp: Float = 18f, interactive: Boolean = false) {
+    fun applyRaised(view: View, radiusDp: Float = 18f, interactive: Boolean = false,
+                    softwareLayer: Boolean = true) {
         val drawable = raised(view.context, radiusDp)
-        view.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        // A software layer is useful for Paint shadow layers on small controls,
+        // but a long settings card can exceed Android's bitmap cache limit.
+        if (softwareLayer) view.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         view.background = drawable
         if (interactive) {
             view.setOnTouchListener { _, event ->

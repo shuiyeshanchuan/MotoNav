@@ -19,15 +19,23 @@ import androidx.core.view.WindowInsetsCompat
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** Five independent, lazily created pages; bottom navigation never scrolls away. */
+/** Three independent, lazily created pages; bottom navigation never scrolls away. */
 class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
                      private val build:(Int)->View, private val onSelected:(Int)->Unit):LinearLayout(activity) {
     private val S=NavStyle
     private fun dp(v:Int)=S.dpi(activity,v)
-    private val titles=listOf("导航","设备","语音","设置","更多")
+    private val titles=listOf("导航","小圆屏","设置")
     private val host=FrameLayout(activity)
-    private val pages=arrayOfNulls<ScrollView>(5)
-    private val restoreY=saved?.getIntArray("main_page_scroll")?.takeIf{it.size==5} ?: IntArray(5)
+    private val pages=arrayOfNulls<ScrollView>(3)
+    private val restoreY=run {
+        val old=saved?.getIntArray("main_page_scroll")
+        when {
+            old == null -> IntArray(3)
+            old.size == 3 -> old
+            old.size >= 5 -> intArrayOf(old[0], old[1], old[3])
+            else -> IntArray(3)
+        }
+    }
     private val tabs=ArrayList<LinearLayout>()
     private val icons=ArrayList<PageIcon>()
     private val labels=ArrayList<TextView>()
@@ -69,7 +77,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
     }
 
     fun showPage(index:Int) {
-        if(index !in 0..4)return
+        if(index !in 0..2)return
         pages[selectedPage]?.visibility=GONE
         selectedPage=index
         val page=pages[index] ?: ScrollView(activity).apply {
@@ -91,7 +99,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
 
     fun save(out:Bundle) {
         out.putInt("main_page_selected",selectedPage)
-        out.putIntArray("main_page_scroll",IntArray(5){pages[it]?.scrollY ?: restoreY[it]})
+        out.putIntArray("main_page_scroll",IntArray(3){pages[it]?.scrollY ?: restoreY[it]})
     }
 
     private inner class PageIcon(private val index:Int):View(activity) {
@@ -110,23 +118,12 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
                     canvas.drawPath(Path().apply{moveTo(7f,13f);lineTo(12f,8f);lineTo(17f,13f);moveTo(12f,8f);lineTo(12f,18f)},paint)
                 }
                 1->{
-                    canvas.drawCircle(12f,12f,9f,paint)
-                    canvas.drawCircle(12f,12f,2f,paint)
+                    canvas.drawCircle(12f,12f,6.5f,paint);canvas.drawCircle(12f,12f,2.5f,paint)
                     canvas.drawPath(Path().apply{moveTo(12f,3f);lineTo(12f,6f);moveTo(12f,18f);lineTo(12f,21f)},paint)
                 }
                 2->{
-                    canvas.drawPath(Path().apply{moveTo(4f,9f);lineTo(8f,9f);lineTo(12f,5f);lineTo(12f,19f);lineTo(8f,15f);lineTo(4f,15f);close()},paint)
-                    canvas.drawArc(RectF(10f,7f,20f,17f),-55f,110f,false,paint)
-                    canvas.drawArc(RectF(7f,3f,24f,21f),-50f,100f,false,paint)
-                }
-                3->{
-                    canvas.drawCircle(12f,12f,6.5f,paint);canvas.drawCircle(12f,12f,2.5f,paint)
+                    canvas.drawCircle(12f,12f,3f,paint)
                     repeat(8){val a=it*Math.PI/4;line((12+6.5*cos(a)).toFloat(),(12+6.5*sin(a)).toFloat(),(12+9*cos(a)).toFloat(),(12+9*sin(a)).toFloat())}
-                }
-                4->{
-                    paint.style=Paint.Style.FILL
-                    canvas.drawCircle(6f,12f,1.7f,paint);canvas.drawCircle(12f,12f,1.7f,paint);canvas.drawCircle(18f,12f,1.7f,paint)
-                    paint.style=Paint.Style.STROKE
                 }
             }
             canvas.restore()

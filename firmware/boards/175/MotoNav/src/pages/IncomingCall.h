@@ -24,6 +24,7 @@ String pendingEvt = "";              // 待发给手机的触摸事件
 bool powerButtonDown = false;
 unsigned long powerButtonAt = 0;
 bool powerMenuOn = false;
+bool powerMenuDismissedForHold = false;
 
 // v5.3 触摸芯片一有动静就拉低中断脚；平时只看这个标记，不用一直读 I2C
 volatile bool touchIrq = false;
@@ -46,6 +47,14 @@ static void restoreAfterPowerMenu() {
   else if (page == 1) wxDirty = true;
   else if (inNav) navDirty = true;
   else drawWaiting(shownConn ? WAIT_READY : WAIT_NOLINK);
+}
+
+static void dismissPowerMenu() {
+  // A cancelled menu is a completed interaction.  Clear the menu state so the
+  // next independent PWR hold can open it again after the normal 2 s hold.
+  powerMenuOn = false;
+  powerMenuDismissedForHold = powerButtonDown;
+  restoreAfterPowerMenu();
 }
 
 void drawPowerMenu() {
@@ -72,13 +81,14 @@ void powerButtonPoll() {
   if (!pressed) {
     powerButtonDown = false;
     powerButtonAt = 0;
+    powerMenuDismissedForHold = false;
     return;
   }
   if (!powerButtonDown) {
     powerButtonDown = true;
     powerButtonAt = now;
   }
-  if (!powerMenuOn && now - powerButtonAt >= PWR_HOLD_MENU_MS) {
+  if (!powerMenuOn && !powerMenuDismissedForHold && now - powerButtonAt >= PWR_HOLD_MENU_MS) {
     powerMenuOn = true;
     drawPowerMenu();
   }
@@ -133,9 +143,9 @@ void touchPoll() {
         powerButtonDown = false;
         idlePowerOffShutdown();
       }
-      if (powerMenuOn && !tap) restoreAfterPowerMenu();
+      if (powerMenuOn && !tap) dismissPowerMenu();
       if (powerMenuOn && tap && !(y0 >= 190 && y0 < 294 &&
-          ((x0 >= 38 && x0 < 222) || (x0 >= 244 && x0 < 428)))) restoreAfterPowerMenu();
+          ((x0 >= 38 && x0 < 222) || (x0 >= 244 && x0 < 428)))) dismissPowerMenu();
       if (!powerMenuOn) touchEat = false;
     }
     return;

@@ -148,7 +148,7 @@ import java.io.File
  *         设置分成「圆屏显示 / 导航语音 / 圆屏设置 / 地图 Key」四组，可折叠，收起时显示一行当前设置；
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  */
-const val APP_VERSION = "v8.3.36"
+const val APP_VERSION = "v8.3.37"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（Neumorphism：同色表面 + 左上亮/右下暗） ----------------
@@ -230,7 +230,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var mainPages: MainPagesShell
-    private val pageRefreshers = Array(5) { ArrayList<() -> Unit>() }
+    private val pageRefreshers = Array(3) { ArrayList<() -> Unit>() }
 
     private fun buildMainPages(saved: Bundle?) {
         mainPages = MainPagesShell(this, saved, { index -> buildMainPage(index) }) { index ->
@@ -239,7 +239,10 @@ class MainActivity : AppCompatActivity() {
             if (index == 0 && searchInput?.text.isNullOrBlank()) refreshHomeIdle?.invoke()
         }
         setContentView(mainPages)
-        mainPages.showPage(saved?.getInt("main_page_selected", 0) ?: 0)
+        val oldPage = saved?.getInt("main_page_selected", 0) ?: 0
+        // v8.3 and earlier had five tabs.  Voice, settings and the old "more"
+        // page now live under the single Settings tab.
+        mainPages.showPage(if (oldPage == 0) 0 else if (oldPage == 1) 1 else 2)
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (mainPages.selectedPage != 0) mainPages.showPage(0)
@@ -255,34 +258,36 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(20))
         }
-        val titles = listOf("导航", "设备", "语音", "设置", "更多")
+        val titles = listOf("导航", "小圆屏", "设置")
         content.addView(pageHeader(if (index == 0) "MotoNav" else titles[index]))
-        fun settingsBody(build: (LinearLayout) -> Unit) {
-            val box = card(); build(box); content.addView(wrapMargin(box))
-        }
         when (index) {
             0 -> {
-                content.addView(cruiseCard())
-                content.addView(searchCard())
+                val navigation = searchCard()
+                val cruising = cruiseCard()
+                val rides = rideCard()
+                val modes = arrayOf(navigation, cruising, rides)
+                val prefs = getSharedPreferences("motonav", MODE_PRIVATE)
+                var mode = prefs.getInt("home_mode", 0).coerceIn(0, 2)
+                fun showMode() { modes.forEachIndexed { i, view -> view.visibility = if (i == mode) View.VISIBLE else View.GONE } }
+                content.addView(segmented(listOf(0 to "导航", 1 to "巡航", 2 to "骑行轨迹"), { mode }) {
+                    mode = it
+                    prefs.edit().putInt("home_mode", it).apply()
+                    showMode()
+                }, lpMatch(bottom = 14))
+                modes.forEach { content.addView(it) }
+                showMode()
             }
             1 -> {
                 content.addView(statusCard())
                 content.addView(setupCard())
                 content.addView(section("screen", "◉", "圆屏设置", { screenSummary() }) { screenSection(it) })
-                content.addView(section("firmware", "↑", "圆屏固件更新", { firmwareSummary() }, forceOpen = true) { firmwareUpdateSection(it) })
+                content.addView(section("firmware", "↑", "圆屏固件更新", { firmwareSummary() }) { firmwareUpdateSection(it) })
             }
             2 -> {
-                val summary = label("", 13f, SUB).apply { setPadding(dp(4), 0, 0, dp(14)) }
-                content.addView(summary); refreshers += { summary.text = voiceSummary() }
-                settingsBody { voiceSection(it) }
-            }
-            3 -> {
-                settingsBody { mapSection(it) }
-                settingsBody { keySection(it) }
-                content.addView(rideCard())
+                content.addView(section("map", "⌖", "地图与显示", { mapSummary() }) { mapSection(it) })
+                content.addView(section("voice", "♫", "导航语音", { voiceSummary() }) { voiceSection(it) })
+                content.addView(section("keys", "🔑", "地图与天气 Key", { keySummary() }) { keySection(it) })
                 content.addView(section("about", "ⓘ", "关于 MotoNav", { "当前 $APP_VERSION · 检查 App 更新" }) { aboutSection(it) })
-            }
-            4 -> {
                 content.addView(label("普通使用不需要进入这里。开发者诊断、测试和手动 OTA 文件入口统一放在高级设置。", 12f, SUB).apply {
                     setPadding(dp(4), 0, dp(4), dp(12))
                 })
@@ -693,7 +698,7 @@ class MainActivity : AppCompatActivity() {
     /** 一张可折叠卡片：标题 + 一行摘要（当前设置），点标题展开 / 收起；展开状态记在手机上 */
     private fun section(key: String, icon: String, title: String, summary: () -> String,
                         forceOpen: Boolean = false, build: (LinearLayout) -> Unit): View {
-        val card = card()
+        val card = card(softwareLayer = false)
         val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(2), 0, dp(2)) }
         head.addView(label(icon, 18f, TEXT), LinearLayout.LayoutParams(dp(32), ViewGroup.LayoutParams.WRAP_CONTENT))
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -929,7 +934,6 @@ class MainActivity : AppCompatActivity() {
         })
         // 卡片网格（两列）
         val gap = dp(12)
-        val itemW = (resources.displayMetrics.widthPixels - dp(16) * 2 - gap) / 2
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val cards = HashMap<Int, LinearLayout>()
         fun styleCard(c: LinearLayout, selected: Boolean) {
@@ -951,8 +955,10 @@ class MainActivity : AppCompatActivity() {
             }
             val img = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
             setThemeImage(img, t)
-            val imgSize = itemW - dp(36)
-            c.addView(img, LinearLayout.LayoutParams(imgSize, imgSize))
+            // The dialog's usable width can be smaller than the physical
+            // screen width.  Fixed two-column weights keep every card inside
+            // the dialog on narrow phones and with larger system fonts.
+            c.addView(img, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(100)))
             val name = label(MapFeeder.themeName(t), 15f, TEXT, bold = true).apply {
                 gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(2))
             }
@@ -970,18 +976,23 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             cards[t] = c
-            row!!.addView(c, LinearLayout.LayoutParams(itemW, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+            row!!.addView(c, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 if (i % 2 == 0) rightMargin = gap
             })
+            if (i == order.lastIndex && i % 2 == 0) {
+                row!!.addView(View(this).apply { visibility = View.INVISIBLE },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            }
         }
         val scroll = ScrollView(this).apply { addView(grid) }
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         // 底部：完成
         root.addView(pillButton("完成", PINK) { dlg.dismiss() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(10) })
-        dlg.setContentView(root)
-        dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        dlg.setContentView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         dlg.show()
+        dlg.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
     }
 
     // ---- v4.1 推荐的免费语音引擎 ----
@@ -1437,7 +1448,7 @@ class MainActivity : AppCompatActivity() {
         val on = !uiPrefs.getBoolean("dev_mode", false)
         uiPrefs.edit().putBoolean("dev_mode", on).apply()
         devWrap?.visibility = if (on) View.VISIBLE else View.GONE
-        if (on) mainPages.showPage(4)
+        if (on) mainPages.showPage(2)
         toast(if (on) "已打开高级设置" else "已隐藏高级设置")
     }
 
@@ -1687,10 +1698,12 @@ class MainActivity : AppCompatActivity() {
 
     // ================= 小组件 =================
 
-    private fun card(): LinearLayout = LinearLayout(this).apply {
+    private fun card(softwareLayer: Boolean = true): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(16), dp(14), dp(16), dp(14))
-        Neumorphic.applyRaised(this, 20f)
+        // Long settings sections must stay in the normal ScrollView render path;
+        // short controls can still use the software layer for soft shadows.
+        Neumorphic.applyRaised(this, 20f, softwareLayer = softwareLayer)
     }
 
     private fun wrapMargin(v: View): View = FrameLayout(this).apply {
