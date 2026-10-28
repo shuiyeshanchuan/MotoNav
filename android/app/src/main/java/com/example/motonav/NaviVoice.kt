@@ -69,11 +69,17 @@ object NaviVoice {
     @Volatile var broadcast = BC_DETAIL
         private set
     @Volatile var broadcastInfo = ""
+    // 仅控制 MotoNav 自己播出的转向提示；高德自带语音由 SDK 决定播报时机。
+    @Volatile var promptDistanceM = 800
+        private set
+    @Volatile var repeatPrompts = true
+        private set
     private var lastNavi: java.lang.ref.WeakReference<AMapNavi>? = null
     private val main = Handler(Looper.getMainLooper())
     private var am: AudioManager? = null
     private var focusReq: AudioFocusRequest? = null
     private var focusHeld = false
+    private var pauseFallbackActive = false
     private var busy = 0                 // 系统语音还没念完的句数
     private var releaseAt = 0L
     private var duckCount = 0
@@ -87,9 +93,24 @@ object NaviVoice {
     private var ctx: Context? = null
     private var tts: TextToSpeech? = null
     private var ready = false
+    private var ttsUnavailable = false
     private var pending: String? = null
     private var lastText = ""
     private var lastAt = 0L
+    private var maneuverKey = ""
+    private var maneuverDistanceM = -1
+    private val spokenManeuverBuckets = HashSet<String>()
+    private var lastTurnText = ""
+    private var lastTurnDistanceM = -1
+    private var lastTurnBucket = ""
+    private var lastTurnAt = 0L
+    private var activeWebRouteKey = ""
+    private val spokenWebPrompts = HashSet<String>()
+    private var lastWebInstruction = ""
+    private var lastWebBucket = -1
+    private var lastWebPromptAt = 0L
+    private var lastWebTurnLat = Double.NaN
+    private var lastWebTurnLng = Double.NaN
     private var onReady: (() -> Unit)? = null
 
     fun load(context: Context) {
@@ -103,6 +124,8 @@ object NaviVoice {
         pitch = sp.getFloat("voice_pitch", 1.0f)
         duck = sp.getInt("voice_duck", DUCK_LOWER)
         broadcast = sp.getInt("voice_broadcast", BC_DETAIL)
+        promptDistanceM = sp.getInt("voice_prompt_distance", 800).takeIf { it in listOf(100, 300, 800) } ?: 800
+        repeatPrompts = sp.getBoolean("voice_repeat_prompts", true)
         am = ctx!!.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         if (mode != MODE_AMAP && mode != MODE_SYSTEM) mode = MODE_SYSTEM     // v4.1 以前选过“AI 语音”的改回系统语音
         if (mode == MODE_SYSTEM) initTts()
@@ -112,14 +135,17 @@ object NaviVoice {
         ctx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()
             ?.putInt("voice_mode", mode)?.putString("voice_engine", engine)?.putString("voice_name", voiceName)
             ?.putFloat("voice_rate", rate)?.putFloat("voice_pitch", pitch)?.putInt("voice_duck", duck)
-            ?.putInt("voice_broadcast", broadcast)?.apply()
+            ?.putInt("voice_broadcast", broadcast)?.putInt("voice_prompt_distance", promptDistanceM)
+            ?.putBoolean("voice_repeat_prompts", repeatPrompts)?.apply()
     }
 
     /** 准备语音引擎（换引擎时重新创建）；done = 准备好以后要做的事（比如刷新声音列表） */
     fun initTts(done: (() -> Unit)? = null) {
         val c = ctx ?: return
         try { tts?.shutdown() } catch (_: Exception) {}
+        tts = null
         ready = false
+        ttsUnavailable = false
         onReady = done
         status = "语音引擎准备中…"
         val listener = TextToSpeech.OnInitListener { r ->
@@ -138,10 +164,21 @@ object NaviVoice {
                 pending = null
             } else {
                 status = "语音引擎启动失败（$r），请换一个引擎或用高德自带语音"
+                ttsUnavailable = true
+                pending = null
+                main.post { abandon() }
             }
             onReady?.invoke(); onReady = null
         }
-        tts = if (engine.isNotEmpty()) TextToSpeech(c, listener, engine) else TextToSpeech(c, listener)
+        tts = try {
+            if (engine.isNotEmpty()) TextToSpeech(c, listener, engine) else TextToSpeech(c, listener)
+        } catch (e: Exception) {
+            ttsUnavailable = true
+            pending = null
+            status = "语音引擎无法启动：${e.message ?: "未知错误"}；导航画面继续工作"
+            onReady?.invoke(); onReady = null
+            null
+        }
     }
 
     private fun applyParams() {
@@ -218,6 +255,63 @@ object NaviVoice {
         applyBroadcast(lastNavi?.get())
     }
 
+    fun setPromptDistance(meters: Int) {
+        promptDistanceM = when (meters) { 100, 300, 800 -> meters; else -> 800 }
+        save()
+    }
+
+    fun setRepeatPrompts(on: Boolean) { repeatPrompts = on; save() }
+
+    /** 高德当前路口；同一段路线重连后的回调仍归入同一个路口。 */
+    fun onManeuver(step: Int, distanceM: Int, epoch: Long, pathId: String) {
+        val key = if (step >= 0) "$epoch:$pathId:$step" else ""
+        if (key != maneuverKey) spokenManeuverBuckets.clear()
+        maneuverKey = key
+        maneuverDistanceM = distanceM.coerceAtLeast(-1)
+    }
+
+    fun resetManeuver() {
+        maneuverKey = ""; maneuverDistanceM = -1; spokenManeuverBuckets.clear()
+        lastText = ""; lastAt = 0
+        lastTurnText = ""; lastTurnDistanceM = -1; lastTurnBucket = ""; lastTurnAt = 0
+    }
+
+    fun resetWebPrompts() {
+        activeWebRouteKey = ""; spokenWebPrompts.clear()
+        lastWebInstruction = ""; lastWebBucket = -1; lastWebPromptAt = 0
+        lastWebTurnLat = Double.NaN; lastWebTurnLng = Double.NaN
+    }
+
+    /** 网页摩托车路线的播报门槛；每个路口按距离档位或仅一次播报。 */
+    fun shouldSpeakWebTurn(routeKey: String, step: Int, distanceM: Int, instruction: String,
+                           turnLat: Double, turnLng: Double): Boolean {
+        if (distanceM > promptDistanceM || instruction.isBlank()) return false
+        val bucket = when {
+            distanceM <= 30 -> 0
+            distanceM <= 100 -> 1
+            distanceM <= 300 -> 2
+            else -> 3
+        }
+        val key = "$routeKey:$step:${if (repeatPrompts) bucket else "once"}"
+        if (routeKey != activeWebRouteKey) {
+            activeWebRouteKey = routeKey
+            spokenWebPrompts.clear()
+        }
+        if (key in spokenWebPrompts) return false
+        val now = SystemClock.elapsedRealtime()
+        // 重算会生成新的路线 key；同一转弯点附近、同一指令和距离档位仍算同一次提醒。
+        if (instruction == lastWebInstruction && bucket == lastWebBucket &&
+            now - lastWebPromptAt < 120_000 && turnLat.isFinite() && turnLng.isFinite() &&
+            lastWebTurnLat.isFinite() && lastWebTurnLng.isFinite() &&
+            MotorTrack.distance(turnLat, turnLng, lastWebTurnLat, lastWebTurnLng) < 35) return false
+        spokenWebPrompts.add(key)
+        lastWebInstruction = instruction
+        lastWebBucket = bucket
+        lastWebPromptAt = now
+        lastWebTurnLat = turnLat; lastWebTurnLng = turnLng
+        return true
+    }
+
     /** 告诉高德用详细还是简洁播报（高德的值从 SDK 里读，读不到就用 简洁 1 / 详细 2） */
     private fun applyBroadcast(navi: AMapNavi?) {
         if (navi == null) return
@@ -243,8 +337,37 @@ object NaviVoice {
             if (duck != DUCK_OFF) main.post { hold(estimateMs(text), "高德") }
             return
         }
+        val turnPrompt = isTurnPrompt(text)
+        if (turnPrompt && maneuverKey.isNotEmpty()) {
+            if (maneuverDistanceM > promptDistanceM) return
+            val bucket = if (!repeatPrompts) "once" else when {
+                maneuverDistanceM <= 30 -> "30"
+                maneuverDistanceM <= 100 -> "100"
+                maneuverDistanceM <= 300 -> "300"
+                else -> "800"
+            }
+            if (bucket in spokenManeuverBuckets) return
+            // A route recalculation changes pathId, yet may repeat the same imminent instruction.
+            if (text == lastTurnText &&
+                ((bucket == lastTurnBucket && now - lastTurnAt < 30_000 &&
+                    kotlin.math.abs(maneuverDistanceM - lastTurnDistanceM) < 150) ||
+                 (lastTurnDistanceM < 0 && now - lastTurnAt < 10_000))) {
+                spokenManeuverBuckets.add(bucket)
+                return
+            }
+            spokenManeuverBuckets.add(bucket)
+            lastTurnText = text; lastTurnBucket = bucket
+            lastTurnDistanceM = maneuverDistanceM; lastTurnAt = now
+        } else if (turnPrompt) {
+            if (text == lastTurnText && now - lastTurnAt < 10_000) return
+            lastTurnText = text; lastTurnDistanceM = -1; lastTurnBucket = ""; lastTurnAt = now
+        }
         speak(text)
     }
+
+    private fun isTurnPrompt(text: String): Boolean =
+        listOf("转", "掉头", "环岛", "靠左", "靠右", "直行").any { it in text } &&
+            listOf("限速", "测速", "电子眼", "摄像", "危险", "施工", "事故", "到达", "目的地").none { it in text }
 
     /** 估算念完要多久：中文每字约 0.24 秒，标点停顿算一点，再加 0.6 秒余量 */
     private fun estimateMs(text: String): Long {
@@ -253,13 +376,16 @@ object NaviVoice {
     }
 
     fun speak(text: String) {
+        if (ttsUnavailable) return
         if (tts == null) initTts()
+        if (ttsUnavailable) return
         if (!ready) { pending = text; return }
         speakNow(text)
     }
 
     private fun speakNow(text: String) {
-        if (duck != DUCK_OFF) main.post {
+        if (Looper.myLooper() != Looper.getMainLooper()) { main.post { speakNow(text) }; return }
+        if (duck != DUCK_OFF) {
             busy++
             hold((estimateMs(text) / rate).toLong() * 2 + 3000, "系统语音")   // 保险：万一引擎不回调“说完了”，最多压这么久
         }
@@ -285,11 +411,18 @@ object NaviVoice {
     /** 申请焦点（压低/暂停音乐），至少保持 ms 毫秒；只在主线程调用 */
     private fun hold(ms: Long, who: String) {
         val now = SystemClock.elapsedRealtime()
-        if (!focusHeld) {
-            if (!request()) { duckInfo = "系统没给音频焦点（$who），这次没压低"; return }
-            focusHeld = true
+        if (!focusHeld && !pauseFallbackActive) {
+            if (request()) {
+                focusHeld = true
+                if (duck == DUCK_PAUSE) pauseOthers()
+            } else if (duck == DUCK_PAUSE && canControlMedia()) {
+                pauseFallbackActive = true
+                pauseOthers()
+            } else {
+                duckInfo = "系统没给音频焦点（$who），这次没压低"
+                return
+            }
             holdStart = now
-            if (duck == DUCK_PAUSE) main.postDelayed({ if (focusHeld) pauseOthers() }, 200)   // v6.6 不听话的音乐 App：直接按暂停
         }
         duckCount++
         duckInfo = "已${if (duck == DUCK_PAUSE) "暂停" else "压低"}音乐 $duckCount 次（最近一次：$who，约 ${ms / 1000.0} 秒）" + (if (duck == DUCK_PAUSE) pauseNote else "")
@@ -331,15 +464,18 @@ object NaviVoice {
 
     private fun abandon() {
         main.removeCallbacks(releaseRun)
-        if (!focusHeld) return
+        val hadFocus = focusHeld
         focusHeld = false
+        pauseFallbackActive = false
         busy = 0
         if (pausedByUs.isNotEmpty()) main.postDelayed({ resumeOthers() }, 300)     // v6.6 播完：把我们暂停的音乐接着放
+        if (!hadFocus) return
         val a = am ?: return
         try {
             if (Build.VERSION.SDK_INT >= 26) focusReq?.let { a.abandonAudioFocusRequest(it) }
             else @Suppress("DEPRECATION") a.abandonAudioFocus(focusListener)
         } catch (_: Exception) {}
+        focusReq = null
     }
 
     // ---------- v6.6 直接让音乐 App 暂停 / 继续（需要「通知使用权」） ----------
@@ -379,7 +515,7 @@ object NaviVoice {
 
     /** 播报完：只把我们暂停的那几个接着放 */
     private fun resumeOthers() {
-        if (focusHeld) return                                   // 又开始播报了：等这次播完再说
+        if (focusHeld || pauseFallbackActive) return            // 又开始播报了：等这次播完再说
         for (mc in pausedByUs) {
             try { if (mc.playbackState?.state != PlaybackState.STATE_PLAYING) mc.transportControls.play() } catch (_: Exception) {}
         }

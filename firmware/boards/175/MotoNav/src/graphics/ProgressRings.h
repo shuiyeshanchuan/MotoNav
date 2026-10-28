@@ -208,8 +208,9 @@ void drawTripDot(float p) {
 
 // 大箭头画面用：整圈行程环
 void drawTripRing(float p) {
-  fillRingBand(0, 1, RING_R - TRIP_H, RING_R + TRIP_H, TRIP_LEFT_C);
-  if (p > 0.002f) fillRingBand(0, p, RING_R - TRIP_H, RING_R + TRIP_H, TRIP_DONE_C);
+  const int halfWidth = navFocus == 5 ? 4 : TRIP_H;
+  fillRingBand(0, 1, RING_R - halfWidth, RING_R + halfWidth, TRIP_LEFT_C);
+  if (p > 0.002f) fillRingBand(0, p, RING_R - halfWidth, RING_R + halfWidth, TRIP_DONE_C);
   drawTripDot(p);
 }
 

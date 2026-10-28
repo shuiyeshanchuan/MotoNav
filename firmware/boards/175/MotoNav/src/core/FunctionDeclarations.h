@@ -178,6 +178,7 @@ float routeUAt(float m);
 void drawTraffic(float cx, float cy, float sc, float cs, float sn, float viewR, float w0, float w1, float from);
 void drawBanner(const String &t, int y, uint16_t col);
 void drawNavHints(int bannerY);
+void drawRouteMeta(int y);
 void addHudObstacles();
 static float ringAngle(float dx, float dy);
 static float bandCov(float r, float rIn, float rOut);

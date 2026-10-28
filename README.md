@@ -148,6 +148,18 @@ iPhone 新增圆屏 BLE HID 媒体按键，可向当前播放器发送播放/暂
 
 ## Windows 一键打包
 
+本机开发和发布构建优先从根目录的统一入口开始。它会固定项目 JDK、Android SDK、Gradle 8.10.2、Gradle 缓存、Arduino CLI，并把 `TEMP/TMP` 指向项目内 `.tools/tmp`：
+
+```powershell
+.\MotoNav-Local.ps1                         # 仅检查本机环境
+.\MotoNav-Local.ps1 -Task Android           # Android release APK
+.\MotoNav-Local.ps1 -Task Firmware          # 1.75C 正式签名固件
+.\MotoNav-Local.ps1 -Task All               # 两者都构建
+.\MotoNav-Local.ps1 -Task Android -Offline  # Android 离线构建
+```
+
+该脚本只准备环境和构建，不会创建或上传 GitHub Release。正式发布仍按路线图和发布文档逐项核验后执行。
+
 1. 下载仓库 ZIP 并完整解压到较短的本地路径。
 2. 双击根目录“一键打包.bat”。不需要 Android Studio。
 3. 首次需要联网下载 JDK、Android SDK、Gradle 和依赖；SDK 许可由官方工具提示，阅读后自行决定是否接受。

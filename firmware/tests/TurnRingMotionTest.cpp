@@ -8,9 +8,9 @@ int main() {
   r.update(0,0.1f,true,100);
   assert(close(r.value(100),0.1f));
   r.update(r.value(1100),0.14f,false,1100);
-  assert(close(r.value(1350),0.11f));
+  assert(close(r.value(1350),0.10625f));
   assert(close(r.value(1600),0.12f));
-  assert(close(r.value(1850),0.13f));
+  assert(close(r.value(1850),0.13375f));
   assert(close(r.value(2100),0.14f));
   r.update(r.value(1600),0.14f,false,1600); // duplicate does not restart
   assert(close(r.value(1850),0.13f));

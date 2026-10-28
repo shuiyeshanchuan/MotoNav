@@ -138,7 +138,7 @@ class MotorWebNavActivity : AppCompatActivity() {
         column.addView(distanceText);column.addView(roadText)
         row.addView(column,LinearLayout.LayoutParams(0,-2,1f));turnCard.addView(row)
         statusText=text(11f,S.SUB).apply{
-            isSingleLine=true;ellipsize=TextUtils.TruncateAt.END;setPadding(dp(2),dp(8),0,0);minHeight=dp(48)
+            maxLines=2;ellipsize=TextUtils.TruncateAt.END;setPadding(dp(2),dp(8),0,0);minHeight=dp(48)
             contentDescription="导航和圆屏状态，点按查看详情";setOnClickListener{showStatusDetails()}
         }
         turnCard.addView(statusText)
@@ -290,7 +290,10 @@ class MotorWebNavActivity : AppCompatActivity() {
             }
             val normal=g.status.startsWith("网页摩托车")
             val state=if(normal){if(g.simulation){if(g.paused)"模拟已暂停" else "模拟导航"}else"摩托车导航"}else g.status
-            statusText.text="$state · ${if(BleLink.verified)"圆屏已连接" else "圆屏未连接"}"
+            val planned=NaviBridge.uiRoutePlannedAt.takeIf{it>0L}
+                ?.let{android.text.format.DateFormat.format("HH:mm",it).toString()}?:"--:--"
+            statusText.text="$state · ${if(BleLink.verified)"圆屏已连接" else "圆屏未连接"}\n"+
+                "${NaviBridge.uiRouteSource} · ${NaviBridge.uiRouteState} · 规划 $planned"
             statusText.setTextColor(if(!normal && !g.arrived)S.AMBER else S.SUB)
             speedNumber.text=if(g.lat.isNaN())"--" else "${g.speed}"
             remainText.text=if(g.arrived)"行程完成" else "${S.distText(g.remaining)} · ${S.durText(g.remainingS)}"
@@ -319,7 +322,8 @@ class MotorWebNavActivity : AppCompatActivity() {
     }
     private fun showStatusDetails(){
         AlertDialog.Builder(this).setTitle("摩托车导航状态")
-            .setMessage("${WebMotorGuide.status}\n${MapFeeder.loadingStatus()}\n\n此实验使用网页摩托车路线。车道、电子眼、道路限速和红绿灯秒数未提供，预计到达时间按路线进度估算。")
+            .setMessage("${WebMotorGuide.status}\n${MapFeeder.loadingStatus()}\n"+
+                "${NaviBridge.uiRouteSource} · ${NaviBridge.uiRouteState}\n\n此实验使用网页摩托车路线。车道、电子眼、道路限速和红绿灯秒数未提供，预计到达时间按路线进度估算。")
             .setPositiveButton("知道了",null).show()
     }
     private fun confirmExit(){

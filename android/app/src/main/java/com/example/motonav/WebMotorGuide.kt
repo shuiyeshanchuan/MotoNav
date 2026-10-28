@@ -46,7 +46,6 @@ object WebMotorGuide {
     private var lastLng = Double.NaN
     private var simProgress = 0.0
     private var lastSimAt = 0L
-    private var lastVoice = ""
     private var roadSent = ""
     private var footerSent = ""
     private var hasFix = false
@@ -64,14 +63,19 @@ object WebMotorGuide {
         startedAt = SystemClock.elapsedRealtime(); lastFixAt = startedAt; lastFixStamp = 0L
         remaining = chosen.distance; remainingS = chosen.seconds
         instruction = "等待定位"; status = if (emulate) "网页摩托车模拟导航" else "正在获取高德定位…"
-        routeSent = ""; roadSent = ""; footerSent = ""; lastVoice = ""; lastRetryAt = -30_000L
+        routeSent = ""; roadSent = ""; footerSent = ""; lastRetryAt = -30_000L
         requestInFlight = false; rerouting = false
+        NaviBridge.uiRouteSource = "摩托车在线路线"
+        NaviBridge.uiRoutePlannedAt = chosen.plannedAtMs
+        NaviBridge.uiRouteState = if (emulate) "模拟导航" else "等待定位"
+        NaviBridge.sendRouteMeta(force = true)
         viaProgress = chosen.request.vias.map { tracker!!.nearestProgress(it.lat, it.lng) }
         MapFeeder.onNaviStart(); MapFeeder.setGhost(null)
         BleLink.send("#z,0"); BleLink.send("#j"); BleLink.send("#k"); BleLink.send("#g"); BleLink.send("#c")
         BleLink.send("#y,0"); BleLink.send("#x,0")
         RideRecorder.start("网页摩托车", chosen.request.end.name, emulate)
         NaviVoice.load(context)
+        NaviVoice.resetWebPrompts()
         NaviVoice.muted = context.getSharedPreferences("motonav",0).getBoolean("nav_muted", false)
         if (!emulate) {
             val epoch = generation
@@ -111,8 +115,10 @@ object WebMotorGuide {
             }
             if (!simulation && t-lastFixAt>10000) {
                 status = "GPS 信号弱，导航进度已暂停，等待新定位"
+                NaviBridge.uiRouteState = "定位暂停"
                 BleLink.send("#x,1")
             }
+            NaviBridge.sendRouteMeta()
             main.postDelayed(this,1000)
         }
     }
@@ -122,18 +128,26 @@ object WebMotorGuide {
     private fun offer(la: Double, lo: Double, accuracy: Double, mps: Double, heading: Float, wall: Long) {
         if (!active) return
         val track = tracker ?: return
-        val result = track.update(la,lo,accuracy,mps,SystemClock.elapsedRealtime())
+        // Hold the same pose for route matching and distance while parked; raw GPS drift must not advance turns.
+        val parked = !simulation && !lat.isNaN() && mps * 3.6 < 2.0
+        val matchLat = if (parked) lat else la
+        val matchLng = if (parked) lng else lo
+        val result = track.update(matchLat,matchLng,accuracy,mps,SystemClock.elapsedRealtime())
         if (result == null) { status = "定位精度不足或位置跳变，等待有效定位"; return }
-        lat=la; lng=lo; bearing=heading; lastFixAt=SystemClock.elapsedRealtime(); hasFix=true
+        // The phone map reads this pose directly.
+        if (!parked) {
+            lat = la; lng = lo; bearing = heading
+        }
+        lastFixAt=SystemClock.elapsedRealtime(); hasFix=true
         speed=(mps*3.6).roundToInt().coerceIn(0,250); tripMax=maxOf(tripMax,speed)
         if (!lastLat.isNaN()) {
-            val d=MotorTrack.distance(lastLat,lastLng,la,lo)
+            val d=MotorTrack.distance(lastLat,lastLng,matchLat,matchLng)
             if (d<300) tripM+=d
         }
-        lastLat=la; lastLng=lo; progress=result.progress
+        lastLat=matchLat; lastLng=matchLng; progress=result.progress
         if (!simulation) RideRecorder.onFix(la,lo,wall,System.currentTimeMillis(),accuracy,speed.toDouble())
         Brightness.updateLocation(la,lo)
-        MapFeeder.onLocation(la,lo,heading,speed)
+        MapFeeder.onLocation(la,lo,heading,speed,accuracy.toFloat())
         val r=route ?: return
         if (routeSent!=r.key && MapFeeder.onRoute(r.key,r.points)) routeSent=r.key
         val stepIndex=r.steps.indexOfFirst { track.cum[it.endIndex] > result.progress + 2 }.let { if (it<0) r.steps.lastIndex else it }
@@ -154,6 +168,11 @@ object WebMotorGuide {
             simulation -> "网页摩托车模拟 · ${simulationKmh} km/h"
             else -> "网页摩托车导航 · 定位精度 ${accuracy.roundToInt()} 米"
         }
+        NaviBridge.uiRouteState = when {
+            requestInFlight -> "正在重新规划"
+            result.offRoute -> "偏航，沿用原路线"
+            else -> "导航中"
+        }
         BleLink.send("#x,0"); BleLink.send("#v,$speed")
         if (!result.offRoute) {
             BleLink.send("$direction,$turnMeters")
@@ -164,12 +183,10 @@ object WebMotorGuide {
             BleLink.send("#e,$remaining,$hhmm,$lights")
             val foot="${"%.1f".format(remaining/1000.0)}km · ${"%02d:%02d".format(hhmm/100,hhmm%100)}到达"
             if (foot!=footerSent) { footerSent=foot; sendText(1,foot,240,19f,15f) }
-            val bucket=when { turnMeters<=30 -> 0; turnMeters<=100 -> 1; turnMeters<=300 -> 2; turnMeters<=800 -> 3; else -> 4 }
-            val voice="${r.key}:$stepIndex:$bucket"
-            if (voice!=lastVoice) {
-                lastVoice=voice
-                if (!NaviVoice.muted) NaviVoice.speak(if (bucket<4) "前方${turnMeters}米，$instruction" else instruction)
-            }
+            val turnPoint = r.points[step.endIndex]
+            if (!NaviVoice.muted && NaviVoice.shouldSpeakWebTurn(r.key, stepIndex, turnMeters, instruction,
+                    turnPoint[0], turnPoint[1]))
+                NaviVoice.speak("前方${turnMeters}米，$instruction")
         }
         if (result.arrived) complete()
         else if (!simulation && result.offRoute) reroute()
@@ -191,7 +208,7 @@ object WebMotorGuide {
         val old=route ?: return
         val remainingVias=old.request.vias.filterIndexed { i, _ -> progress < viaProgress[i]+30 }
         val request=old.request.copy(start=MotorPoint(lat,lng,"当前位置"), vias=remainingVias)
-        status="正在重新规划摩托车路线…"; BleLink.send("#y,1")
+        status="正在重新规划摩托车路线…"; NaviBridge.uiRouteState = "正在重新规划"; BleLink.send("#y,1")
         if (!NaviVoice.muted) NaviVoice.speak("已偏离路线，重新规划摩托车路线")
         worker.execute {
             val result=runCatching { WebMotorRoutes.load(request).first() }
@@ -199,13 +216,16 @@ object WebMotorGuide {
                 if (!active || epoch!=generation) return@post
                 requestInFlight=false
                 result.onSuccess { next ->
-                    route=next; tracker=next.tracker(); routeSent=""; lastVoice=""; progress=0.0
+                    route=next; tracker=next.tracker(); routeSent=""; progress=0.0
+                    NaviBridge.uiRoutePlannedAt = next.plannedAtMs
                     viaProgress=next.request.vias.map { tracker!!.nearestProgress(it.lat,it.lng) }
                     rerouting=false; BleLink.send("#y,0")
                     remaining=next.distance; remainingS=next.seconds
                     status="摩托车路线已重算，等待新定位"
+                    NaviBridge.uiRouteState = "重算成功，等待定位"
                 }.onFailure {
                     status="摩托车重算失败：${it.message}；30 秒后再试。请停稳后查看路线。"
+                    NaviBridge.uiRouteState = "重算失败，沿用原路线"
                     // Keep rerouting indicator while off route; no driving fallback.
                 }
             }
@@ -215,6 +235,8 @@ object WebMotorGuide {
     private fun complete() {
         if (!active || arrived) return
         arrived=true; active=false; remaining=0; turnMeters=0; status="已到达目的地"
+        NaviBridge.uiRouteState = "已到达"
+        NaviBridge.sendRouteMeta()
         instruction="已到达目的地"; direction="A"
         location?.stopLocation(); location?.onDestroy(); location=null
         main.removeCallbacks(tick); RideRecorder.stop()
@@ -232,6 +254,7 @@ object WebMotorGuide {
         runCatching { location?.stopLocation(); location?.onDestroy() }; location=null
         if (hadSession) RideRecorder.stop()
         route=null; tracker=null; status="网页导航已退出"
+        NaviBridge.uiRouteSource = ""; NaviBridge.uiRoutePlannedAt = 0L; NaviBridge.uiRouteState = ""
         if (hadSession && sendCancel) { BleLink.send("#y,0"); BleLink.send("#x,0"); BleLink.send("C") }
     }
 }

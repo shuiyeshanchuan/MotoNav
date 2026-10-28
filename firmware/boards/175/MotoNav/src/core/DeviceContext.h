@@ -130,6 +130,15 @@ int afterNextNavDist = -1;
 unsigned long lastRxMs = 0;   // 最近一次收到任何消息的时间
 bool staleShown = false;      // 是否正在显示“数据中断”提示
 bool navDirty = false;        // 导航画面需要重画
+bool navLargeText = false;    // #VD：速度与距离大字
+int navLightMode = 0;         // #VD：0 常规、1 夜间低亮、2 雨天高对比
+int navFocus = 0;             // #VD：0 默认、1 速度、2 距离、3 路名、4 车道、5 行程
+int routeSource = 0;          // #RS：0 未知、1 高德驾车、2 高德骑行、3 高德分享、4 网页摩托车
+int routePlannedHHMM = -1;   // #RS：规划时刻；-1 未知
+int routeState = 0;           // #RS：0 准备、1 导航、2 重算、3 暂停/失败、4 GPS 弱、5 已到达
+bool safetyEmphasis = true;   // #SA：额外安全描边；关掉仍显示限速、电子眼及危险标记
+int safetyStrength = 1;       // #SA：0 低、1 标准、2 高
+int requestedBrightness = 200; // 保留手机设定，夜间模式只限制实际亮度
 
 int speedKmh = -1;            // 车速，-1 表示还没有
 int camLimit = 0, camDist = 0;
@@ -165,7 +174,7 @@ float mapCamLockH[MCAM_MAX];  // v4.0 放图标时的地图朝向：之后固定
 uint8_t laneBg[8], laneFr[8]; // 每条车道的背景方向码、推荐方向码（0xF = 不推荐）
 
 // ===== 文字图片（手机渲染好的 4 位灰度图）=====
-#define IMG_SLOTS 13           // 0 = 路名，1 = 底部信息，2 = 来电人名字，3/4 = 天气地名和风湿度，5/6 = 音乐歌名和歌手
+#define IMG_SLOTS 14           // 0/1 = 导航文字，2 = 电话姓名，3/4 = 天气，5/6 = 音乐，12 = 歌词，13 = 通知岛文字
 #define IMG_MAX   8192        // 每张图最多字节数
 struct TextImg {
   uint8_t *show;              // 正在显示的图

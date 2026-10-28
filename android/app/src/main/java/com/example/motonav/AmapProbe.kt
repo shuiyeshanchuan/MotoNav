@@ -128,11 +128,20 @@ class AmapNotifyListener : NotificationListenerService() {
     override fun onListenerConnected() {
         MusicBridge.init(this)
         MusicBridge.refresh(true)
+        CallWatcher.load(this)
         AmapProbe.add("系统", "nl", "通知读取已连接")
         try { activeNotifications?.forEach { onNotificationPosted(it) } } catch (_: Exception) {}
     }
 
+    override fun onListenerDisconnected() {
+        CallWatcher.onWechatListenerDisconnected()
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
+        if (sbn?.packageName == "com.tencent.mm") {
+            CallWatcher.onWechatPosted(this, sbn)
+            return
+        }
         if (sbn == null || !sbn.packageName.startsWith("com.autonavi")) return
         val n = sbn.notification ?: return
         val sb = StringBuilder()
@@ -141,6 +150,10 @@ class AmapNotifyListener : NotificationListenerService() {
         sb.append("  通知界面：").append(viewTexts(n)).append('\n')
         AmapProbe.notifCount++
         AmapProbe.add("高德通知", "n:${sbn.packageName}:${sbn.id}", sb.toString().trim())
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        if (sbn?.packageName == "com.tencent.mm") CallWatcher.onWechatRemoved(sbn)
     }
 
     /**

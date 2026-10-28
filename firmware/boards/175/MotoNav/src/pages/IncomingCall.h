@@ -1,11 +1,15 @@
 #pragma once
 // 触摸初始化与来电页面。由 MotoNav.ino 按依赖顺序包含，仅编译一次。
-// ================= v5.1 来电显示 =================
-// 手机来电时整屏显示：上面 “INCOMING CALL”，中间绿色电话图标带往外扩散的波纹，下面是名字（手机渲染好的
-// 文字图片，图片栏 2）和号码；接听或挂断后回到原来的画面（地图 / 大箭头 / 首页）
+// 来电与微信通知显示在当前导航、天气或音乐画面的顶部。
+// 电话使用图片栏 2 显示联系人，按住底部小卡片接听；结束后恢复当前页面。
 bool callOn = false;
 String callNum = "";
 unsigned long callAt = 0, callSeenAt = 0;
+bool callIslandDrawn = false;
+// #I,kind,ttl: 1=phone, 2=WeChat call, 3=WeChat message.
+uint8_t noticeKind = 0;
+unsigned long noticeAt = 0, noticeUntil = 0;
+bool noticeDirty = false;
 
 // v5.2 触屏接电话：按住任意位置 HOLD_MS 毫秒 → 发 "T,A" 给手机（v6.9 800 → 200）
 #define HOLD_MS 200
@@ -47,7 +51,7 @@ void powerButtonInit() {
 void drawCallScreen();
 
 static void restoreAfterPowerMenu() {
-  if (callOn) drawCallScreen();
+  if (callOn) { callIslandDrawn = false; drawCallScreen(); }
   else if (pairOn) drawPairScreen();
   else if (page == 2) musicDirty = true;
   else if (page == 1) wxDirty = true;
@@ -168,6 +172,7 @@ void touchPoll() {
   }
   if (n > 0) {
     if (!touchDown) {
+      dragAbort(); // A new touch starts a fresh gesture, even after a menu interrupted the last one.
       touchDown = true;
       touchHoldAt = now;
       touchX0 = touchX1 = x[0]; touchY0 = touchY1 = y[0];
@@ -221,42 +226,73 @@ void drawHandset(float cx, float cy, float r, uint16_t c) {
 void drawCallScreen() {
   onWaitScreen = false;
   frameIsMap = false;
-  gfx->fillScreen(C_BLACK);
-  unsigned long t = millis() - callAt;
-  const float icy = 168;
-  // 往外扩散的两圈波纹
-  for (int k = 0; k < 2; k++) {
-    float ph = fmodf(t / 1400.0f + k * 0.5f, 1.0f);
-    float r = 52 + ph * 110;
-    uint16_t c = blend565(C_GREEN, C_BLACK, (int)(ph * 255));
-    for (int w = 0; w < 3; w++) gfx->drawCircle(CX, (int)icy, (int)r + w, c);
-  }
-  aaDisc(CX, icy, 50, 0x2DC6);
-  aaDisc(CX, icy, 46, C_GREEN);
-  // 听筒轻轻左右晃
-  float wob = ((t / 120) % 4 < 2) ? -2.5f : 2.5f;
-  drawHandset(CX + wob, icy, 26, C_WHITE);
-  printCentered("INCOMING CALL", CX, 58, 2, C_GREEN);
+  static unsigned long drawnCallAt = 0;
+  static String drawnCallNum;
+  static const uint8_t *drawnName = nullptr;
+  static uint16_t drawnNameW = 0;
+  static uint8_t drawnNameH = 0;
+  static bool drawnAnswerSent = false;
+  static int drawnHoldWidth = -1;
+  const int holdWidth = touchOK && !callAnswerSent ? constrain((int)(touchHold * 160), 0, 160) : 0;
+  const bool full = !callIslandDrawn || needFlush || drawnCallAt != callAt ||
+      drawnCallNum != callNum || drawnName != imgs[2].show ||
+      drawnNameW != imgs[2].showW || drawnNameH != imgs[2].showH ||
+      drawnAnswerSent != callAnswerSent;
+  if (!full && holdWidth == drawnHoldWidth) return;
+  if (full) {
+  // Preserve the current navigation/music/weather frame under the call island.
+  // The lower answer tab stays left of the right-side traffic-light card.
+  gfx->fillRoundRect(94, 49, 292, 79, 30, C_BLACK);
+  gfx->drawRoundRect(94, 49, 292, 79, 30, C_GREEN);
+  gfx->fillRoundRect(94, 109, 226, 66, 24, C_BLACK);
+  gfx->drawRoundRect(94, 109, 226, 66, 24, C_GREEN);
+  aaDisc(119, 78, 14, 0x2DC6);
+  drawHandset(119, 80, 8, C_WHITE);
+  printCentered("PHONE CALL", CX + 4, 66, 2, C_GREEN);
   bool hasName = imgs[2].show && imgs[2].showW > 0;
   if (hasName) {
-    drawTextImg(2, 252, 0xFF);
-    if (callNum.length()) printCentered(callNum, CX, 318, 2, C_GREY);
+    drawTextImg(2, 86, 0xFF);
+    if (callNum.length()) printCentered(callNum, 207, 132, 2, C_GREY);
   } else if (callNum.length()) {
-    printCentered(callNum, CX, 262, callNum.length() > 12 ? 3 : 4, C_WHITE);
+    printCentered(callNum, CX, 101, 2, C_WHITE);
   } else {
-    printCentered("UNKNOWN", CX, 262, 4, C_WHITE);
+    printCentered("INCOMING CALL", CX, 101, 2, C_WHITE);
   }
-  // v5.2 触屏接听提示；按住时绿圈外面一圈白点从正上方顺时针走满
+  // Hold progress stays inside the island; a WeChat call never sets callOn.
   if (touchOK) {
-    if (callAnswerSent) printCentered("ANSWERING...", CX, 392, 2, C_GREEN);
-    else printCentered("TAP & HOLD", CX, 392, 2, C_GREY);      // v6.9
-    if (touchHold > 0 && !callAnswerSent) {
-      int steps = (int)(touchHold * 72);
-      for (int k = 0; k <= steps; k++) {
-        float a = k * 5 * PI / 180;
-        aaDisc(CX + sinf(a) * 64, icy - cosf(a) * 64, 4, C_WHITE);
-      }
-    }
+    printCentered(callAnswerSent ? "ANSWERING..." : "HOLD SCREEN TO ANSWER", 207, 155, 1,
+                  callAnswerSent ? C_GREEN : C_GREY);
   }
+  drawnCallAt = callAt;
+  drawnCallNum = callNum;
+  drawnName = imgs[2].show;
+  drawnNameW = imgs[2].showW;
+  drawnNameH = imgs[2].showH;
+  drawnAnswerSent = callAnswerSent;
+  callIslandDrawn = true;
+  }
+  // This bar is entirely inside the black tab, so a release can erase the
+  // previous progress without repainting the rest of the island.
+  if (touchOK && (full || holdWidth != drawnHoldWidth)) {
+    gfx->fillRect(119, 165, 160, 4, C_BLACK);
+    if (holdWidth > 0) gfx->fillRoundRect(119, 165, holdWidth, 4, 2, C_GREEN);
+  }
+  drawnHoldWidth = holdWidth;
+  needFlush = true;
+}
+
+void drawNotificationIsland() {
+  if (noticeKind == 0 || callOn) return;
+  const bool isCall = noticeKind == 2;
+  const uint16_t accent = isCall ? C_GREEN : C_CYAN;
+  gfx->fillRoundRect(94, 49, 292, 80, 30, C_BLACK);
+  gfx->drawRoundRect(94, 49, 292, 80, 30, accent);
+  aaDisc(119, 78, 9, accent);
+  printCentered(noticeKind == 1 || isCall ? "INCOMING CALL" : "WECHAT MESSAGE",
+                CX + 6, 61, 2, accent);
+  int labelSlot = noticeKind == 1 ? 2 : 13;
+  if (imgs[labelSlot].show && imgs[labelSlot].showW > 0) drawTextImg(labelSlot, 85, 0xFF);
+  else printCentered(noticeKind == 1 ? "INCOMING CALL" : isCall ? "INCOMING CALL" : "NEW MESSAGE",
+                     CX, 92, 2, C_WHITE);
   needFlush = true;
 }

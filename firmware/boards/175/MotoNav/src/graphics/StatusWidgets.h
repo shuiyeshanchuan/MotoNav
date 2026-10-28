@@ -37,12 +37,16 @@ void drawStatus() {
 void drawSpeedBlock(bool over) {
   if (speedKmh < 0) return;
   int sx = hasCam ? 200 : CX;
-  printCentered(String(speedKmh), sx, SPEED_Y, 5, over ? C_RED : C_WHITE);   // 每个字符 30x40
-  printCentered(over ? "OVER" : "km/h", sx, SPEED_Y + 46, over ? 1 : 2, over ? C_RED : C_GREY);
+  int size = (navLargeText || navFocus == 1) ? 6 : 5;
+  printCentered(String(speedKmh), sx, SPEED_Y, size, over ? C_RED : C_WHITE);
+  printCentered(over ? "OVER" : "km/h", sx, SPEED_Y + (size == 6 ? 53 : 46), over ? 1 : 2,
+                over ? C_RED : navLightMode == 2 ? C_WHITE : C_GREY);
   if (hasCam) {
     const int bx = 298, by = 76;
     aaDisc(bx, by, 28, C_SIGNRED);
     aaDisc(bx, by, 21, C_WHITE);
+    if (safetyEmphasis)
+      for (int i = 0; i <= safetyStrength; i++) gfx->drawCircle(bx, by, 29 + i, C_SIGNRED);
     String lim = String(camLimit);
     int sz = lim.length() >= 3 ? 2 : 3;
     printCentered(lim, bx, by - 4 * sz, sz, C_BLACK);

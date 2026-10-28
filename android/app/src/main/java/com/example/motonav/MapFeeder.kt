@@ -247,6 +247,11 @@ object MapFeeder {
         screenDeg = sp.getInt("screen_deg", screenRot * 90)
         leadMs = sp.getInt("lead_ms", 300)
         progress = sp.getBoolean("trip_prog", true)
+        navLargeText = sp.getBoolean("nav_large_text", false)
+        navLightMode = sp.getInt("nav_light_mode", 0).coerceIn(0, 2)
+        navFocus = sp.getInt("nav_focus", 0).coerceIn(0, 5)
+        safetyEmphasis = sp.getBoolean("safety_emphasis", true)
+        safetyStrength = sp.getInt("safety_strength", 1).coerceIn(0, 2)
         if (!MapStylePolicy.isValid(theme)) theme = 1
     }
 
@@ -300,6 +305,50 @@ object MapFeeder {
         progress = on
         ctx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putBoolean("trip_prog", on)?.apply()
         BleLink.send(if (on) "#M1" else "#M0")
+    }
+
+    @Volatile var navLargeText = false
+        private set
+    @Volatile var navLightMode = 0
+        private set
+    @Volatile var navFocus = 0
+        private set
+    @Volatile var safetyEmphasis = true
+        private set
+    @Volatile var safetyStrength = 1
+        private set
+
+    private fun sendNavDisplay() = BleLink.send("#VD,${if (navLargeText) 1 else 0},$navLightMode,$navFocus")
+    private fun sendSafetyStyle() = BleLink.send("#SA,${if (safetyEmphasis) 1 else 0},$safetyStrength")
+
+    fun setNavLargeText(on: Boolean) {
+        navLargeText = on
+        ctx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putBoolean("nav_large_text", on)?.apply()
+        sendNavDisplay()
+    }
+
+    fun setNavLightMode(mode: Int) {
+        navLightMode = mode.coerceIn(0, 2)
+        ctx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putInt("nav_light_mode", navLightMode)?.apply()
+        sendNavDisplay()
+    }
+
+    fun setNavFocus(focus: Int) {
+        navFocus = focus.coerceIn(0, 5)
+        ctx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putInt("nav_focus", navFocus)?.apply()
+        sendNavDisplay()
+    }
+
+    fun setSafetyEmphasis(on: Boolean) {
+        safetyEmphasis = on
+        ctx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putBoolean("safety_emphasis", on)?.apply()
+        sendSafetyStyle()
+    }
+
+    fun setSafetyStrength(strength: Int) {
+        safetyStrength = strength.coerceIn(0, 2)
+        ctx?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)?.edit()?.putInt("safety_strength", safetyStrength)?.apply()
+        sendSafetyStyle()
     }
 
     /** v4.8 清爽模式开关（"#w,1/0"） */
@@ -411,7 +460,10 @@ object MapFeeder {
     private var lastBearing: Float? = null       // v4.3 最后一次正常行驶时的朝向
 
     /** 每次定位调用（主线程）：lat/lng 为高德坐标，bearing 为朝向（度，正北 = 0，顺时针） */
-    fun onLocation(lat: Double, lng: Double, bearing: Float, kmh: Int) {
+    fun onLocation(lat: Double, lng: Double, bearing: Float, kmh: Int, accuracyM: Float) {
+        if (!lat.isFinite() || !lng.isFinite()) return
+        val poorFix = !accuracyM.isFinite() || accuracyM < 0f || accuracyM > 50f
+        if (poorFix && !havePose) return
         var f = frame
         if (f == null) {
             // v2.3 坐标原点取所在区域（0.1 度网格）的固定点，编号也由它决定：App 重启后保持不变
@@ -420,11 +472,16 @@ object MapFeeder {
             f = MapGeo.Frame(la, lo, id)
             frame = f
         }
-        val x = f.x(lng); val y = f.y(lat)
-        poseX = x; poseY = y; poseKmh = kmh; havePose = true
-        // v4.3 停车（车速很低）时 GPS 朝向会乱跳，圆屏地图跟着乱转：沿用最后一次正常行驶时的朝向
-        val hdg = if (kmh >= 4 || lastBearing == null) bearing.also { if (kmh >= 4) lastBearing = it } else lastBearing!!
-        BleLink.send("#p,${f.id},${(x * 10).roundToInt()},${(y * 10).roundToInt()},${hdg.roundToInt()},$kmh")
+        val stopped = kmh < 2 && havePose
+        val x = if (poorFix || stopped) poseX else f.x(lng)
+        val y = if (poorFix || stopped) poseY else f.y(lat)
+        val mapKmh = if (poorFix) 0 else kmh
+        poseX = x; poseY = y; poseKmh = mapKmh; havePose = true
+        // 低速或弱定位时固定车头方向；重新行驶且定位可靠后才接受新朝向。
+        val validBearing = bearing.isFinite() && bearing in 0f..360f
+        val hdg = if (validBearing && kmh >= 4 && !poorFix) bearing.also { lastBearing = it }
+            else lastBearing ?: if (validBearing) bearing else 0f
+        BleLink.send("#p,${f.id},${(x * 10).roundToInt()},${(y * 10).roundToInt()},${hdg.roundToInt()},$mapKmh")
         if (ghostCoords != null && ghostBytes == null) encodeGhost()     // v4.5 有坐标系了，原路线可以发了
         if (!enabled) return
 
@@ -447,11 +504,11 @@ object MapFeeder {
         val wanted=target
         val needs=if (wanted!=null) !haveChunk || chunkType!=TYPE_RASTER ||
             kotlin.math.abs(wanted.x-chunkCx)>1 || kotlin.math.abs(wanted.y-chunkCy)>1
-            else !haveChunk || MapCoveragePolicy.shouldRefresh(x-cx,y-cy,bearing,kmh,sat,basePreparationSeconds(),half)
+            else !haveChunk || MapCoveragePolicy.shouldRefresh(x-cx,y-cy,hdg,mapKmh,sat,basePreparationSeconds(),half)
         // 已发出的普通图必须完整确认；下载后续地图不能冲掉正在传输的数据。
         if (!fetching && (!haveChunk || chunkAcked) && needs && (lastFetchFail==0L || now()-lastFetchFail>5000)) {
-            val a=Math.toRadians(bearing.toDouble())
-            val ahead=if (kmh>5) (if (satMode()) SAT_AHEAD else AHEAD) else 0.0
+            val a=Math.toRadians(hdg.toDouble())
+            val ahead=if (mapKmh>5) (if (satMode()) SAT_AHEAD else AHEAD) else 0.0
             fetchChunk(f,wanted?.x ?: (x+sin(a)*ahead),wanted?.y ?: (y+cos(a)*ahead),wanted)
         }
         checkResend()
@@ -678,6 +735,9 @@ object MapFeeder {
             BleLink.send("#D$screenDeg")                 // v6.3 任意角度（固件 v6.4）
             BleLink.send("#L$leadMs")                    // v7.2 预判提前量（固件 v6.7）
             BleLink.send(if (progress) "#M1" else "#M0")  // v8.0 路程进度条（固件 v7.3）
+            sendNavDisplay()
+            sendSafetyStyle()
+            NaviBridge.sendRouteMeta(force = true)
             nightSent = -1; applyNight()                 // v2.8 夜间配色
             haveConfirmedChunk = false
             chunkDeliveryId = -1

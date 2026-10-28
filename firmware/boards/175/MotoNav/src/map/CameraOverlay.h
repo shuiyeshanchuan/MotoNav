@@ -139,6 +139,12 @@ void drawCamIcons(float cx, float cy, float sc, float cs, float sn) {
   for (int q = 0; q < mkN; q++) {
     bool cam = false;                                                    // v4.8 这一处有没有电子眼（道路安全提示不算）
     for (int i = 0; i < mapCamN && i < MCAM_MAX; i++) if (camMk[i] == q && mapCamTyp[i] < 16) cam = true;
+    if (safetyEmphasis) {
+      const int x = (int)lroundf(mkX[q]), y = (int)lroundf(mkY[q]);
+      const int radius = cam ? 11 : 6;
+      for (int i = 0; i <= safetyStrength; i++)
+        gfx->drawCircle(x, y, radius + i, cam ? C_CYAN : C_ORANGE);
+    }
     if (cam) {
       blitRGBA(CAM_MARK, CAMM_S, (int)lroundf(mkX[q]), (int)lroundf(mkY[q]));
       ciX[ciN] = mkX[q]; ciY[ciN] = mkY[q]; ciR[ciN] = MKR; ciN++;

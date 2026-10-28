@@ -28,6 +28,16 @@ public final class MotorTrackTest {
         check(off.offRoute,"three off-route fixes trigger reroute");
         check(!t.update(30.00005,104,5,0,7000).offRoute,"back on route clears off-route");
 
+        // WebMotorGuide feeds its held pose while stopped, then resumes live fixes on movement.
+        t=straight();
+        MotorTrack.Match held=t.update(30.004,104,5,0,1000);
+        for(int i=1;i<=10;i++) {
+            MotorTrack.Match m=t.update(30.004,104,5,0,1000+i*1000);
+            check(m!=null && m.progress==held.progress && !m.arrived,"held parked pose keeps route progress");
+        }
+        MotorTrack.Match resumed=t.update(30.0045,104,5,4,12000);
+        check(resumed!=null && resumed.progress>held.progress+40,"moving fix resumes route progress");
+
         // Endpoint is only 22 m from the start, but the route goes around a long block.
         t=new MotorTrack(new double[][]{{30,104},{30.01,104},{30.01,104.01},{30.0002,104.01},{30.0002,104}});
         check(!t.update(30,104,3,0,1000).arrived,"loop start is not arrival");

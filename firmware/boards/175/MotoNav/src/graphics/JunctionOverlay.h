@@ -3,8 +3,7 @@
 // Keep the map centre free: one compact row per signal on the right edge.
 void drawTrafficLightLab(uint32_t now) {
   const bool preview=trafficLightPreviewUntil && (int32_t)(trafficLightPreviewUntil-now)>0;
-  const bool pending=!preview && trafficLightFrame.valid(now) && !trafficLightLab.valid(now);
-  const bool other=!preview && trafficLightLab.phases[3].valid(now);
+  const bool other=!preview && trafficLightFrame.valid(now) && trafficLightLab.phases[3].valid(now);
   const int rows=other?4:3,x=CX+91,y=140,w=96,h=40,gap=3;
   static int previousRows=0;
   if(previousRows>rows)navDirty=true;
@@ -14,10 +13,9 @@ void drawTrafficLightLab(uint32_t now) {
   uint32_t signature=preview?0xFFFF:0;
   for(int i=0;i<rows;++i) {
     const TrafficLightPhase &p=trafficLightLab.phases[i];
-    const bool present=!preview&&p.valid(now);
-    const bool known=present&&(p.status==1||p.status==4||p.status==-1);
-    // Missing right-lamp data is a route cue only; do not create a phase/countdown.
-    const bool rightMissing=!preview && !pending && i==2 && !known;
+    const bool present=!preview&&trafficLightFrame.valid(now)&&p.valid(now);
+    const unsigned seconds=present?p.seconds(now):0;
+    const bool known=present&&seconds>0&&(p.status==1||p.status==4||p.status==-1);
     const uint16_t color=!known?C_GREY:p.status==1?C_RED:p.status==4?C_GREEN:0xFFE0;
     const int ry=y+i*(h+gap);
     gfx->fillRoundRect(x,ry,w,h,7,0x1082);
@@ -32,9 +30,8 @@ void drawTrafficLightLab(uint32_t now) {
       gfx->fillRect(x+8,ry+15,4,14,color);gfx->fillRect(x+8,ry+15,14,4,color);
       gfx->fillTriangle(x+28,ry+17,x+18,ry+8,x+18,ry+26,color);
     } else gfx->fillCircle(x+15,ry+17,6,color);
-    unsigned seconds=present?p.seconds(now):0;
-    if(rightMissing)gfx->fillCircle(x+64,ry+15,10,C_GREY);
-    else printCentered(known&&seconds?String(seconds):String("--"),x+64,ry+3,3,color);
+    if(known)printCentered(String(seconds),x+64,ry+3,3,color);
+    else printCentered(String("NO DATA"),x+64,ry+9,1,C_GREY);
     const char* label=i==0?"LEFT":i==1?"STRAIGHT":i==2?"RIGHT":"OTHER";
     printCentered(String(label),x+64,ry+29,1,C_WHITE);
     if(present&&p.wait>0)printCentered(String("W")+p.wait,x+15,ry+30,1,C_GREY);
@@ -46,5 +43,16 @@ void drawTrafficLightLab(uint32_t now) {
       trafficLightLab.phases[0].seconds(now),trafficLightLab.phases[1].seconds(now),trafficLightLab.phases[2].seconds(now),inNav,mapModeActive());
     previous=signature;
   }
+  needFlush=true;
+}
+
+// An expired lease loses its signal colors immediately. Briefly show an
+// unknown state before the navigation frame takes the card area back.
+void drawTrafficLightExpired(uint32_t elapsed) {
+  const int x=CX+91,y=140,w=96,h=4*(40+3)+12;
+  const uint16_t shade=elapsed<100?C_GREY:elapsed<220?0x4208:0x2104;
+  gfx->fillRoundRect(x-2,y-14,w+4,h,8,C_BLACK);
+  gfx->drawRoundRect(x-2,y-14,w+4,h,8,shade);
+  printCentered("NO DATA",x+w/2,y+61,1,shade);
   needFlush=true;
 }

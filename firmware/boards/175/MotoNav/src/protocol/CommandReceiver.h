@@ -15,7 +15,8 @@ void resetNavState() {
   speedKmh = -1;
   hasCam = false;
   laneN = 0;
-  ringActive = false; ringDir = "";
+  routeSource = 0; routePlannedHHMM = -1; routeState = 0;
+  ringActive = false; ringDir = ""; arrowAnimationAt = 0;
   for (int i = 0; i < 3; i++) { imgs[i].showW = 0; imgs[i].showH = 0; imgs[i].recvId = -1; }   // v5.3 天气栏 3、4 留着
 }
 
@@ -41,8 +42,10 @@ void handleText(const String &m) {
     return;
   }
   if (m.startsWith("#TL,") || m.startsWith("#TLS,")) {
-    Serial.printf("TL WIRE at=%lu %s\n",millis(),m.c_str());
-    bool accepted=trafficLightLab.receive(m.c_str(), millis());
+    // A phase without a fresh route/junction lease must never become a traffic signal.
+    const bool anchored=trafficLightFrame.valid(millis());
+    if(!anchored)trafficLightLab.clear();
+    bool accepted=anchored && trafficLightLab.receive(m.c_str(), millis());
     Serial.printf("TL JUNCTION RX accepted=%d source=%d count=%u left=%d straight=%d right=%d other=%d\n",
       accepted,trafficLightLab.source,trafficLightLab.count(millis()),trafficLightLab.phases[0].valid(millis()),
       trafficLightLab.phases[1].valid(millis()),trafficLightLab.phases[2].valid(millis()),trafficLightLab.phases[3].valid(millis()));
@@ -316,6 +319,15 @@ void handleText(const String &m) {
   if (m == "#WXRESET") { wxHave = false; wxExtra = false; wxDetail = 0; wxDirty = true; return; }
   if (m.startsWith("#WX,")) { parseWeatherExtra(m); return; }
   if (m.startsWith("#W,")) { parseWeather(m); return; }   // v5.3 天气
+  if (m.startsWith("#I,")) {                             // 通知岛：0=清除，1=电话，2=微信来电，3=微信消息
+    int kind = -1, ttl = 0;
+    if (sscanf(m.c_str(), "#I,%d,%d", &kind, &ttl) < 1 || kind < 0 || kind > 3) return;
+    noticeKind = (uint8_t)kind;
+    noticeAt = millis();
+    noticeUntil = kind ? noticeAt + (unsigned long)constrain(ttl, 1000, 30000) : 0;
+    noticeDirty = true;
+    return;
+  }
   if (m.startsWith("#i,")) {                             // v5.1 来电："#i,1,号码" / "#i,0"
     bool on = m.charAt(3) == '1';
     if (on) {
@@ -326,7 +338,13 @@ void handleText(const String &m) {
       if (callNum.length() > 16) callNum = callNum.substring(0, 16);
     }
     callOn = on;
-    if (!on) navDirty = true;
+    if (!on) {
+      if (noticeKind == 1) noticeKind = 0;
+      noticeDirty = true;
+      if (page == 2) musicDirty = true;
+      else if (page == 1) wxDirty = true;
+      else navDirty = true;
+    }
     return;
   }
   if (m.startsWith("#y,")) {                             // v5.0 重新规划中
@@ -363,8 +381,40 @@ void handleText(const String &m) {
     return;
   }
   if (m.startsWith("#m,")) { mapOn = m.substring(3).toInt() != 0; navDirty = true; return; }
+  if (m.startsWith("#RS,")) {
+    int source = -1, planned = -2, state = -1;
+    if (sscanf(m.c_str(), "#RS,%d,%d,%d", &source, &planned, &state) != 3 ||
+        source < 0 || source > 4 || planned < -1 || planned > 2359 ||
+        (planned >= 0 && planned % 100 >= 60) || state < 0 || state > 5) return;
+    routeSource = source; routePlannedHHMM = planned; routeState = state;
+    navDirty = true;
+    return;
+  }
+  if (m.startsWith("#VD,")) {
+    int large = -1, light = -1, focus = -1;
+    if (sscanf(m.c_str(), "#VD,%d,%d,%d", &large, &light, &focus) != 3 ||
+        large < 0 || large > 1 || light < 0 || light > 2 || focus < 0 || focus > 5) return;
+    navLargeText = large != 0; navLightMode = light; navFocus = focus;
+    int b = navLightMode == 1 ? min(requestedBrightness, 80) : requestedBrightness;
+    if (flushDone) {
+      xSemaphoreTake(flushDone, portMAX_DELAY);
+      panel->setBrightness(b);
+      xSemaphoreGive(flushDone);
+    } else panel->setBrightness(b);
+    navDirty = true;
+    return;
+  }
+  if (m.startsWith("#SA,")) {
+    int emphasis = -1, strength = -1;
+    if (sscanf(m.c_str(), "#SA,%d,%d", &emphasis, &strength) != 2 ||
+        emphasis < 0 || emphasis > 1 || strength < 0 || strength > 2) return;
+    safetyEmphasis = emphasis != 0; safetyStrength = strength;
+    navDirty = true;
+    return;
+  }
   if (m.startsWith("#b,")) {
-    int b = constrain(m.substring(3).toInt(), 5, 255);
+    requestedBrightness = constrain(m.substring(3).toInt(), 5, 255);
+    int b = navLightMode == 1 ? min(requestedBrightness, 80) : requestedBrightness;
     if (flushDone) {                                    // v2.2 刷屏任务在用总线时先等它推完
       xSemaphoreTake(flushDone, portMAX_DELAY);
       panel->setBrightness(b);

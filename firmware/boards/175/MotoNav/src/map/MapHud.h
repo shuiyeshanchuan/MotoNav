@@ -56,13 +56,17 @@ void dimRect(int x, int y, int w, int h, int r, int keep) {
 void drawMapSpeed(bool over) {
   if (speedKmh < 0) return;
   int sx = hasCam ? CX - 40 : CX;
-  printOutlined(String(speedKmh), sx, 44, 4, over ? C_RED : TH.hud);
-  printOutlined(over ? "OVER" : "km/h", sx, 80, 1, over ? C_RED : TH.hud);
+  int size = (navLargeText || navFocus == 1) ? 5 : 4;
+  printOutlined(String(speedKmh), sx, 44, size, over ? C_RED : navLightMode == 2 ? C_WHITE : TH.hud);
+  printOutlined(over ? "OVER" : "km/h", sx, size == 5 ? 87 : 80, 1,
+                over ? C_RED : navLightMode == 2 ? C_WHITE : TH.hud);
   if (hasCam) {
     const int bx = CX + 52, by = 60;
     aaDisc(bx, by, 27, C_BLACK);
     aaDisc(bx, by, 25, C_SIGNRED);
     aaDisc(bx, by, 19, C_WHITE);
+    if (safetyEmphasis)
+      for (int i = 0; i <= safetyStrength; i++) gfx->drawCircle(bx, by, 28 + i, C_SIGNRED);
     String lim = String(camLimit);
     int sz = lim.length() >= 3 ? 2 : 3;
     printCentered(lim, bx, by - 4 * sz, sz, C_BLACK);
@@ -70,14 +74,14 @@ void drawMapSpeed(bool over) {
   }
 }
 
-// ---- v3.1 红绿灯小图标：竖着的黑色灯箱 + 红黄绿三个灯 ----
+// 路线上存在信号灯的中性标记；不表达当前灯色或可通行状态。
 void drawTrafficLight(float cx, float cy, float h) {
   float w = h * 0.46f, r = h * 0.13f;
   gfx->fillRoundRect((int)(cx - w / 2 - 1), (int)(cy - h / 2 - 1), (int)w + 2, (int)h + 2, (int)(w / 2.6f), C_BLACK);
   gfx->fillRoundRect((int)(cx - w / 2), (int)(cy - h / 2), (int)w, (int)h, (int)(w / 3), 0x2104);
-  aaDisc(cx, cy - h * 0.29f, r, 0xF8A2);     // 红
-  aaDisc(cx, cy, r, 0xFDA0);                // 黄
-  aaDisc(cx, cy + h * 0.29f, r, 0x3F09);    // 绿
+  aaDisc(cx, cy - h * 0.29f, r, C_GREY);
+  aaDisc(cx, cy, r, C_GREY);
+  aaDisc(cx, cy + h * 0.29f, r, C_GREY);
 }
 
 // v3.1 底部一行行程信息：到达时间 · 剩余里程 · 红绿灯数（半透明深色底）
@@ -92,7 +96,7 @@ void drawTripLine(int y) {
   int w = (a.length() + b.length()) * CW + GAP + (lights ? GAP + ICON + 3 + c.length() * CW : 0);
   int x = CX - w / 2;
   dimRect(x - 10, y - 5, w + 20, 26, 12, 75);
-  printCentered(a, x + a.length() * CW / 2, y, 2, TH.hud);
+  printCentered(a, x + a.length() * CW / 2, y, 2, navFocus == 5 || navLightMode == 2 ? C_WHITE : TH.hud);
   x += a.length() * CW + GAP;
   printCentered(b, x + b.length() * CW / 2, y, 2, C_WHITE);
   x += b.length() * CW + GAP;
@@ -105,7 +109,7 @@ void drawTripLine(int y) {
 
 // 车道跟随转弯倒计时显示（当前从 500 米开始）；有测速牌时再往下让一点。
 void drawMapLanes() {
-  const bool visible = laneN > 0 && ringActive;
+  const bool visible = laneN > 0 && (ringActive || navFocus == 4);
 #if FPS_SERIAL_DIAGNOSTICS
   static int previous = -1;
   const int state = visible ? laneN : 0;

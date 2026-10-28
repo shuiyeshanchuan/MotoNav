@@ -1,4 +1,5 @@
 #pragma once
+extern bool noticeDirty; // Defined by IncomingCall.h, included later in the sketch.
 // 手机文字位图分包接收。由 MotoNav.ino 按依赖顺序包含，仅编译一次。
 // 'B' slot id part parts wLo wHi h offLo offHi + 数据
 void handleBitmap(const uint8_t *d, int n) {
@@ -13,6 +14,7 @@ void handleBitmap(const uint8_t *d, int n) {
     navDirty = true;
     if (slot == 3 || slot == 4) wxDirty = true;
     if (slot == 5 || slot == 6 || slot == 12) musicDirty = true;
+    if (slot == 13) noticeDirty = true;
     return;
   }
   if (slot == 12 && (!musicLyrics || !hidMusicMode || !appleMedia.available ||
@@ -34,5 +36,6 @@ void handleBitmap(const uint8_t *d, int n) {
     navDirty = true;
     if (slot == 3 || slot == 4) wxDirty = true;
     if (slot == 5 || slot == 6 || slot == 12) musicDirty = true;                // 音乐文字图片收齐后刷新
+    if (slot == 13) noticeDirty = true;
   }
 }

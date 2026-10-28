@@ -126,17 +126,23 @@ void drawMapFrame() {
     bool isNear = navDist <= STAGE_NEAR_M;
     // v7.4 平时外圈是行程环；出现转弯倒计时就换成倒计时环（盖掉行程环）
     float tp = ringActive ? -1 : tripFrac();
-    drawRingLayer(navDir != "S" && tp < 0, ringActive ? ringShown : 0, isNear ? 14 : 10, isNear ? C_ORANGE : C_YELLOW, over, tp);
+    drawRingLayer(navDir != "S" && tp < 0, ringActive ? ringShown : 0, isNear ? 14 : 10,
+                  isNear ? C_ORANGE : navLightMode == 2 ? C_WHITE : C_YELLOW, over, tp);
   }
   profMark(6);
   drawMapSpeed(over);
   profMark(7);
   drawMapLanes();                                       // v3.3 车道（车速下面）
+  if (navFocus == 3 && inNav && imgs[0].showW > 0) {
+    dimRect(CX - 150, 293, 300, 38, 10, 55);
+    drawTextImg(0, 298, 0xFF);
+  }
   profMark(8);
   drawMapBadge();
   profMark(9);
   hasCam = saveCam; tripOn = saveTrip;
   drawNavHints(300);                                    // v5.0 重新规划中 / 更快路线 / GPS 信号弱
+  drawRouteMeta(329);
   drawBattery(CX - 16, 18, true);                         // v6.8 电量（车速上方）；v7.2 带黑底
   profMark(10);
   // v2.9 小地图里不画顶部的蓝牙小圆点（会和 N 标记重叠；能收到地图就说明连着）

@@ -13,7 +13,9 @@ struct TurnRingMotion {
   float value(uint32_t now) const {
     const uint32_t elapsed = now - started;
     if (!duration || elapsed >= duration) return target;
-    return from + (target - from) * (float(elapsed) / duration);
+    const float t = float(elapsed) / duration;
+    const float eased = t * t * (3 - 2 * t);
+    return from + (target - from) * eased;
   }
   void update(float shown, float next, bool reset, uint32_t now) {
     const uint32_t gap = now - lastPacket;

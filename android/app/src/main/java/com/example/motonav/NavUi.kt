@@ -118,8 +118,26 @@ class TurnArrowView(ctx: Context) : View(ctx) {
         val pts = ArrayList<FloatArray>()
         var hx = 0f; var hy = 0f; var hdx = 0f; var hdy = -1f
         var ring = false
+        val roundabout = dir == "RB" || dir == "RL" || dir == "RR" || dir == "RU"
+        val fork = dir == "FL" || dir == "FR"
         when (dir) {
             "A" -> ring = true
+            "RB", "RL", "RR", "RU" -> {
+                pts += floatArrayOf(0.5f, 0.95f); pts += floatArrayOf(0.5f, 0.75f)
+                when (dir) {
+                    "RL" -> { hx = 0.08f; hy = 0.5f; hdx = -1f; hdy = 0f }
+                    "RR" -> { hx = 0.92f; hy = 0.5f; hdx = 1f; hdy = 0f }
+                    "RU" -> { hx = 0.25f; hy = 0.86f; hdx = 0f; hdy = 1f }
+                    else -> { hx = 0.5f; hy = 0.08f; hdx = 0f; hdy = -1f }
+                }
+            }
+            "FL", "FR" -> {
+                val left = dir == "FL"
+                pts += floatArrayOf(0.5f, 0.95f); pts += floatArrayOf(0.5f, 0.55f)
+                hx = if (left) 0.18f else 0.82f; hy = 0.2f
+                hdx = if (left) -0.68f else 0.68f; hdy = -0.73f
+                pts += floatArrayOf(hx, hy)
+            }
             "U" -> {
                 pts += floatArrayOf(0.64f, 0.95f); pts += floatArrayOf(0.64f, 0.42f)
                 // 上方半圆弧
@@ -155,7 +173,9 @@ class TurnArrowView(ctx: Context) : View(ctx) {
         val b2 = floatArrayOf(hx - nx * hw, hy - ny * hw)
         // 2. 算外框，缩放到控件中间
         var x0 = 9f; var y0 = 9f; var x1 = -9f; var y1 = -9f
-        val all = if (ring) listOf(floatArrayOf(0.15f, 0.1f), floatArrayOf(0.85f, 0.9f)) else pts + listOf(tip, b1, b2)
+        val all = if (ring) listOf(floatArrayOf(0.15f, 0.1f), floatArrayOf(0.85f, 0.9f))
+            else pts + listOf(floatArrayOf(hx, hy), tip, b1, b2) +
+                (if (roundabout) listOf(floatArrayOf(0.25f, 0.25f), floatArrayOf(0.75f, 0.75f)) else emptyList())
         for (p in all) { x0 = min(x0, p[0]); x1 = max(x1, p[0]); y0 = min(y0, p[1]); y1 = max(y1, p[1]) }
         val sw = 0.13f
         val k = 0.86f * s / max(x1 - x0 + sw, y1 - y0 + sw)
@@ -175,10 +195,28 @@ class TurnArrowView(ctx: Context) : View(ctx) {
                 c.drawCircle(X(0.5f), Y(0.5f), 0.11f * k + extra / 2, fill)
                 continue
             }
+            if (roundabout) {
+                c.drawCircle(X(0.5f), Y(0.5f), 0.25f * k, line)
+                c.drawLine(X(0.5f), Y(0.95f), X(0.5f), Y(0.75f), line)
+                val start = when (dir) {
+                    "RL" -> floatArrayOf(0.25f, 0.5f)
+                    "RR" -> floatArrayOf(0.75f, 0.5f)
+                    "RU" -> floatArrayOf(0.25f, 0.5f)
+                    else -> floatArrayOf(0.5f, 0.25f)
+                }
+                c.drawLine(X(start[0]), Y(start[1]), X(hx), Y(hy), line)
+            } else {
+                if (fork) {
+                    line.color = if (pass == 0) col else NavStyle.SUB
+                    line.strokeWidth = 0.08f * k + extra
+                    c.drawLine(X(0.5f), Y(0.55f), X(if (dir == "FL") 0.82f else 0.18f), Y(0.2f), line)
+                    line.color = col; line.strokeWidth = sw * k + extra
+                }
             val path = Path()
             path.moveTo(X(pts[0][0]), Y(pts[0][1]))
             for (i in 1 until pts.size) path.lineTo(X(pts[i][0]), Y(pts[i][1]))
             c.drawPath(path, line)
+            }
             val h = Path()
             h.moveTo(X(tip[0]), Y(tip[1])); h.lineTo(X(b1[0]), Y(b1[1])); h.lineTo(X(b2[0]), Y(b2[1])); h.close()
             if (pass == 0) { fill.style = Paint.Style.FILL_AND_STROKE; fill.strokeWidth = extra } else fill.style = Paint.Style.FILL

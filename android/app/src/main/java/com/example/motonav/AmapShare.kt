@@ -608,7 +608,7 @@ object ShareGuide {
     }
 
     private fun reroute(r: AmapShare.Route) {
-        if (lat.isNaN() || now() - lastOurAt < 8000) return
+        if (lat.isNaN() || now() - lastOurAt < 30_000) return
         val c = ctx ?: return
         val n = try { com.amap.api.navi.AMapNavi.getInstance(c) } catch (_: Throwable) { return }
         val from = AmapShare.progressAhead(r, lat, lng, maxProg - 50)

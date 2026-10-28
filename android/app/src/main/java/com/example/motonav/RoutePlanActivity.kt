@@ -891,6 +891,12 @@ class RoutePlanActivity : AppCompatActivity() {
         calculating = true
         val seq = ++calcSeq
         showStatus(if (bicycle) "正在规划自行车路线…" else "正在规划驾车路线…")
+        NaviBridge.uiRouteSource = when {
+            shareRoute != null -> "高德分享${shareRoute?.kind.orEmpty()}路线"
+            bicycle -> "高德骑行路线"
+            else -> "高德驾车路线"
+        }
+        NaviBridge.uiRouteState = "正在规划"
         NaviBridge.routeCallback = { ok, res -> if (seq == calcSeq) onRouteResult(ok, res) }
         val sr = shareRoute
         NaviBridge.directRouteMode = if (bicycle) LocalRouting.BICYCLE else LocalRouting.DRIVE
@@ -928,6 +934,7 @@ class RoutePlanActivity : AppCompatActivity() {
         calculating = false
         val n = navi ?: return
         if (!ok) {
+            NaviBridge.uiRouteState = "规划失败"
             val code = Refl.int(res, "getErrorCode") ?: (res as? Int)
             val detail = Refl.str(res, "getErrorDetail", "getErrorDescription") ?: ""
             showStatus("${if (bicycle) "自行车" else "驾车"}路线规划失败（${code ?: "?"}）$detail\n${if (bicycle) "请检查高德 Key 的骑行算路权限、额度和网络；不会改用驾车路线。\n" else ""}点这里重试", true)
@@ -936,7 +943,9 @@ class RoutePlanActivity : AppCompatActivity() {
         val paths = availablePaths()
         val fromRes = (Refl.call(res, "getRouteid").second as? IntArray)?.filter { paths.containsKey(it) }
         val ids = (if (!fromRes.isNullOrEmpty()) fromRes else paths.keys.sorted()).take(3)
-        if (ids.isEmpty()) { showStatus("没有可用的路线，点这里重试", true); return }
+        if (ids.isEmpty()) { NaviBridge.uiRouteState = "规划失败"; showStatus("没有可用的路线，点这里重试", true); return }
+        NaviBridge.uiRoutePlannedAt = System.currentTimeMillis()
+        NaviBridge.uiRouteState = "路线已规划"
         routeIds = ids.toIntArray()
         val m = aMap ?: return
         for (id in ids) {

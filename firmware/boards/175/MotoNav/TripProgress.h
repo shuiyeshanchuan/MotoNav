@@ -12,7 +12,8 @@ public:
     if(!valid_)return 0;
     uint32_t elapsed=now-at_;
     if(duration_==0 || elapsed>=duration_)return target_;
-    return from_+(target_-from_)*(elapsed/(float)duration_);
+    float t=elapsed/(float)duration_;
+    return from_+(target_-from_)*(t*t*(3-2*t));
   }
   void sample(float fraction,uint32_t now) {
     float target=fraction<0?0:(fraction>1?1:fraction);

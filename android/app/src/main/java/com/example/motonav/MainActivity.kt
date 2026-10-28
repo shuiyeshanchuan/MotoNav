@@ -156,7 +156,7 @@ import java.io.File
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  */
-const val APP_VERSION = "v8.3.40"
+const val APP_VERSION = "v8.3.41"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -762,6 +762,29 @@ class MainActivity : AppCompatActivity() {
         card.addView(settingRow("路程进度环", "最外圈绿环，走过的变灰；快到路口时换成转弯倒计时",
             toggle({ MapFeeder.progress }) { MapFeeder.setProgress(it) }))
         card.addView(divider())
+        card.addView(settingRow("导航大字", "圆屏转向距离和主要信息放大",
+            toggle({ MapFeeder.navLargeText }) { MapFeeder.setNavLargeText(it) }))
+        card.addView(subhead("骑行显示环境"))
+        card.addView(segmented(listOf(0 to "常规", 1 to "夜间低亮", 2 to "雨天高对比"),
+            { MapFeeder.navLightMode }) { MapFeeder.setNavLightMode(it) })
+        val focusNames = arrayOf("默认", "速度", "距离", "路名", "车道", "行程")
+        val focusValue = label("", 12f, SUB)
+        card.addView(settingRow("显示重点", "选择圆屏导航页最醒目的信息", textLink("选择") {
+            android.app.AlertDialog.Builder(this)
+                .setTitle("圆屏显示重点")
+                .setSingleChoiceItems(focusNames, MapFeeder.navFocus) { dialog, index ->
+                    MapFeeder.setNavFocus(index)
+                    dialog.dismiss()
+                }.show()
+        }, focusValue))
+        refreshers += { focusValue.text = focusNames[MapFeeder.navFocus] }
+        card.addView(divider())
+        card.addView(settingRow("安全提示强调", "关闭仅取消额外描边；原有安全提示不受此开关影响",
+            toggle({ MapFeeder.safetyEmphasis }) { MapFeeder.setSafetyEmphasis(it) }))
+        card.addView(subhead("安全提示强调程度"))
+        card.addView(segmented(listOf(0 to "低", 1 to "标准", 2 to "高"),
+            { MapFeeder.safetyStrength }) { MapFeeder.setSafetyStrength(it) })
+        card.addView(divider())
         // v4.8 清爽模式
         card.addView(settingRow("清爽模式", "只留车速和转弯，不显示红绿灯、电子眼等", toggle({ MapFeeder.clean }) { MapFeeder.setClean(it) }))
         card.addView(divider())
@@ -803,6 +826,12 @@ class MainActivity : AppCompatActivity() {
                 "简洁：话少，只在快到路口和关键时刻提醒（熟路用）"
             else "详细：路口前多次提醒，报路名、距离和沿途信息（不熟的路用）")
         }
+        card.addView(subhead("转弯提醒距离", top = 16))
+        card.addView(segmented(listOf(800 to "提前", 300 to "标准", 100 to "临近"),
+            { NaviVoice.promptDistanceM }) { NaviVoice.setPromptDistance(it) })
+        card.addView(note("仅控制 MotoNav 的系统语音和网页摩托车路线；高德自带语音由高德决定播报距离。限速等安全提醒不受影响"))
+        card.addView(settingRow("同一路口重复提醒", "开启后可随距离接近再次播报",
+            toggle({ NaviVoice.repeatPrompts }) { NaviVoice.setRepeatPrompts(it) }))
         // v5.1 播报时音乐怎么办
         card.addView(subhead("播报时的音乐", top = 16))
         card.addView(segmented(listOf(NaviVoice.DUCK_LOWER to "压低", NaviVoice.DUCK_PAUSE to "暂停", NaviVoice.DUCK_OFF to "不管"),
@@ -837,7 +866,7 @@ class MainActivity : AppCompatActivity() {
             catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知使用权") }
         }, lpMatch(top = 8, bottom = 4).apply { height = dp(48) })
         refreshers += { musicHint.text = if (AmapProbe.notifEnabled(this))
-            "圆屏左滑查看天气，右滑查看歌曲；音乐页左滑返回，点按上一首、播放/暂停、下一首。上下滑也能查看天气。"
+            "圆屏横向滑动可循环切换导航、天气、音乐；音乐页点按上一首、播放/暂停、下一首。"
             else "先开启通知使用权，才能显示歌名和控制手机播放器。需要圆屏固件 v7.8.1。" }
 
         // 语音引擎
@@ -910,7 +939,9 @@ class MainActivity : AppCompatActivity() {
     private fun voiceSummary(): String =
         (if (NaviVoice.mode == NaviVoice.MODE_AMAP) "高德自带" else "手机系统语音") + " · " +
             (if (NaviVoice.broadcast == NaviVoice.BC_CONCISE) "简洁" else "详细") + "播报 · 音乐" +
-            when (NaviVoice.duck) { NaviVoice.DUCK_LOWER -> "压低"; NaviVoice.DUCK_PAUSE -> "暂停"; else -> "不管" }
+            when (NaviVoice.duck) { NaviVoice.DUCK_LOWER -> "压低"; NaviVoice.DUCK_PAUSE -> "暂停"; else -> "不管" } +
+            (if (NaviVoice.mode == NaviVoice.MODE_AMAP) " · 距离由高德控制"
+            else " · ${NaviVoice.promptDistanceM} 米内提醒")
 
     private fun toast(t: String) = Toast.makeText(this, t, Toast.LENGTH_SHORT).show()
 
@@ -1053,21 +1084,45 @@ class MainActivity : AppCompatActivity() {
         // v5.0 来电显示
         val callSub = label("", 12f, SUB).apply {                // v7.5 权限没给全时黄字提示，点一下去授权
             setOnClickListener {
-                if (CallWatcher.enabled && CallWatcher.PERMS.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED })
-                    requestPermissions(CallWatcher.PERMS, 7)
+                if (CallWatcher.enabled && CallWatcher.requiredPermissions().any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED })
+                    requestPermissions(CallWatcher.requiredPermissions(), 7)
             }
         }
         card.addView(settingRow("来电显示", null,
             toggle({ CallWatcher.enabled }) { on ->
                 CallWatcher.setEnabled(this, on)
-                if (on && CallWatcher.PERMS.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED })
-                    requestPermissions(CallWatcher.PERMS, 7)
+                if (on && CallWatcher.requiredPermissions().any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED })
+                    requestPermissions(CallWatcher.requiredPermissions(), 7)
             }, callSub))
         refreshers += {
-            val missing = CallWatcher.enabled && CallWatcher.PERMS.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+            val missing = CallWatcher.enabled && CallWatcher.requiredPermissions().any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
             callSub.text = if (missing) "${CallWatcher.permsText(this)}（点这里授权）"
-                else "来电时圆屏显示名字和号码，按住圆屏 0.2 秒接听"   // v7.7
+                else if (CallWatcher.privacyMode) "来电时只显示“来电”，圆屏仍可接听普通电话"
+                else "来电时圆屏显示名字和号码，按住圆屏 0.2 秒接听"
             callSub.setTextColor(if (missing) AMBER else SUB)
+        }
+        card.addView(settingRow("来电隐私模式", "隐藏号码和联系人，只显示“来电”",
+            toggle({ CallWatcher.privacyMode }) { CallWatcher.setPrivacyMode(this, it) }))
+        val wechatSub = label("", 12f, SUB).apply {
+            setOnClickListener {
+                if (CallWatcher.wechatEnabled && !AmapProbe.notifEnabled(this@MainActivity))
+                    try { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
+                    catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知使用权") }
+            }
+        }
+        card.addView(settingRow("微信来电与通知", null,
+            toggle({ CallWatcher.wechatEnabled }) { on ->
+                CallWatcher.setWechatEnabled(this, on)
+                if (on && !AmapProbe.notifEnabled(this))
+                    try { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
+                    catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知使用权") }
+            }, wechatSub))
+        refreshers += {
+            val access = AmapProbe.notifEnabled(this)
+            wechatSub.text = if (CallWatcher.wechatEnabled && !access)
+                "需要通知使用权，点击这里前往系统设置"
+            else "圆屏提示微信来电和消息发送者，不显示消息正文；圆屏不能接听微信电话"
+            wechatSub.setTextColor(if (CallWatcher.wechatEnabled && !access) AMBER else SUB)
         }
         card.addView(divider())
         // 亮度
@@ -1971,7 +2026,7 @@ class MainActivity : AppCompatActivity() {
     private fun requestAllPermissions() {
         // v7.5 来电显示开着时，电话相关权限一起要（以前只在拨开关时才要，重装后容易漏掉）
         val p = neededPermissions().toMutableList()
-        if (CallWatcher.enabled) p += CallWatcher.PERMS
+        if (CallWatcher.enabled) p += CallWatcher.requiredPermissions()
         requestPermissions(p.toTypedArray(), 1)
     }
 

@@ -86,6 +86,37 @@ object NaviBridge {
     @Volatile var uiHasInfo = false           // 已经收到过导航信息
     @Volatile var uiLastInfoAt = 0L           // 最近一次收到高德导航信息的单调时钟
     @Volatile var uiLightDist = -1            // v3.1 前方红绿灯距离（米，-1 = 300 米内没有）
+    @Volatile var uiRouteSource = ""
+    @Volatile var uiRoutePlannedAt = 0L
+    @Volatile var uiRouteState = "等待路线"
+    private var lastRouteMetaMsg = ""
+
+    /** Compact route facts for the round screen; unknown source/time remain explicit. */
+    fun sendRouteMeta(force: Boolean = false) {
+        val source = when {
+            uiRouteSource == "高德驾车路线" -> 1
+            uiRouteSource == "高德骑行路线" -> 2
+            uiRouteSource.startsWith("高德分享") -> 3
+            uiRouteSource == "摩托车在线路线" -> 4
+            else -> 0
+        }
+        val planned = uiRoutePlannedAt.takeIf { it > 0L }
+            ?.let { android.text.format.DateFormat.format("HHmm", it).toString().toIntOrNull() } ?: -1
+        val state = when {
+            uiRouteState.contains("重新规划") -> 2
+            uiRouteState.contains("偏航") || uiRouteState.contains("失败") ||
+                uiRouteState.contains("暂停") || uiRouteState.contains("网络不可用") -> 3
+            uiRouteState.contains("GPS 信号弱") -> 4
+            uiRouteState.contains("已到达") -> 5
+            uiRouteState == "导航中" || uiRouteState == "模拟导航" -> 1
+            else -> 0
+        }
+        val msg = "#RS,$source,$planned,$state"
+        if (force || msg != lastRouteMetaMsg) {
+            lastRouteMetaMsg = msg
+            BleLink.send(msg)
+        }
+    }
     /** 算路结果回调（选路线页面设置）：成功与否、高德给的结果对象 */
     @Volatile var routeCallback: ((Boolean, Any?) -> Unit)? = null
     @Volatile private var usingComponent = false   // v3.8 正在用高德原版界面（它自己播报，系统语音不再重复念）
@@ -102,7 +133,7 @@ object NaviBridge {
     //     （60km/h ≈ 500 米，120km/h ≈ 670 米）
     private fun cameraRange(): Int = (speedKmhNow / 3.6 * 20).toInt().coerceIn(500, 1000)
     @Volatile private var speedKmhNow = 0
-    private const val CAMERA_TIMEOUT_MS = 90_000L   // 90 秒没有任何更新就不再显示测速牌
+    private const val SAFETY_TIMEOUT_MS = 30_000L  // 所有摄像头、限速和道路设施使用同一有效期
 
     // ---- 推算用的状态（只在主线程里读写）----
     private var active = false
@@ -111,6 +142,7 @@ object NaviBridge {
     private var curAngle: Int? = null          // v1.8 当前路口的实际转弯角度（度），算不出来时为 null
     private var angleKey = ""                  // 缓存：哪条路线的哪个路段
     private var lastRouteKey = ""              // v2.0 已发给小地图的路线
+    private var observedRouteKey = ""          // 最新规划路线，即使地图块尚未就绪也记录规划时间
     private var curStep = -1
     private var baseDist = 0
     private var baseAt = 0L
@@ -180,6 +212,7 @@ object NaviBridge {
             return null
         }
         MapFeeder.onNaviStart()
+        NaviVoice.resetManeuver()
         usingComponent = false
         return navi
     }
@@ -235,11 +268,17 @@ object NaviBridge {
 
     /** 高德转向图标编号 → 圆屏方向代码 */
     fun iconToDir(icon: Int): String = when (icon) {
-        2, 6, 21 -> "L"     // 左转、左后方、环岛左转
-        3, 7, 22 -> "R"     // 右转、右后方、环岛右转
-        4, 65 -> "SL"       // 左前方、靠左
-        5, 66 -> "SR"       // 右前方、靠右
-        8, 19, 24 -> "U"    // 掉头
+        2, 6 -> "L"        // 左转、左后方
+        3, 7 -> "R"        // 右转、右后方
+        4 -> "SL"          // 左前方
+        5 -> "SR"          // 右前方
+        8, 19 -> "U"       // 掉头
+        11, 12, 17, 18, 23, 27 -> "RB" // 环岛进入、驶出或直行
+        21, 25 -> "RL"     // 环岛左转
+        22, 26 -> "RR"     // 环岛右转
+        24, 28 -> "RU"     // 环岛掉头
+        65 -> "FL"         // 靠左行驶；没有立交语义时只画分叉
+        66 -> "FR"         // 靠右行驶
         15 -> "A"           // 到达目的地
         else -> "S"         // 直行及其他
     }
@@ -309,7 +348,7 @@ object NaviBridge {
         handler.removeCallbacks(tick)
         tripStartAt = 0L; tripMeters = 0.0; tripMaxKmh = 0; tripLat = Double.NaN; tripLng = Double.NaN   // v7.9
         active = false
-        curDir = ""; curStep = -1; curAngle = null; angleKey = ""; lastRouteKey = ""
+        curDir = ""; curStep = -1; curAngle = null; angleKey = ""; lastRouteKey = ""; observedRouteKey = ""
         baseDist = 0; baseAt = 0L; speed = 0.0
         shownDir = ""; shownDist = -1
         lastUpdateAt = 0L; lastGap = 0.0
@@ -318,6 +357,9 @@ object NaviBridge {
         camLimit = 0; camMinDist = Int.MAX_VALUE
         lastRoadText = ""; lastBottomText = ""
         extraInfo = ""
+        uiRouteSource = ""; uiRoutePlannedAt = 0L; uiRouteState = "等待路线"
+        sendRouteMeta()
+        NaviVoice.resetManeuver()
         uiDir = ""; uiAngle = null; uiDist = -1; uiNextRoad = ""; uiCurRoad = ""
         uiNextTurnDir = ""; uiNextTurnDist = -1; uiNextTurnRoad = ""
         uiAfterNextTurnDir = ""; uiAfterNextTurnDist = -1; uiAfterNextTurnRoad = ""
@@ -335,7 +377,8 @@ object NaviBridge {
     private data class UpcomingTurn(val dir: String, val dist: Int, val road: String)
 
     private fun isTurn(dir: String): Boolean = dir == "L" || dir == "R" ||
-        dir == "SL" || dir == "SR" || dir == "U"
+        dir == "SL" || dir == "SR" || dir == "U" || dir == "RL" ||
+        dir == "RR" || dir == "RU" || dir == "FL" || dir == "FR"
 
     /** 从当前路段之后找两次真正的转向，直行段只累计距离不占用提示位。 */
     private fun upcomingTurns(step: Int, currentRemain: Int): List<UpcomingTurn> {
@@ -390,6 +433,7 @@ object NaviBridge {
         handler.post {
             if (!arrivalSession.acceptsGuidance(epoch)) return@post
             val t = now()
+            NaviVoice.onManeuver(step, raw, epoch, navi?.naviPath?.pathid?.toString().orEmpty())
             if (lastUpdateAt != 0L) {
                 lastGap = (t - lastUpdateAt) / 1000.0
                 if (step == curStep && lastGap in 0.2..5.0 && raw <= baseDist) {
@@ -405,6 +449,11 @@ object NaviBridge {
             // v2.0 路线变化（新规划、偏航重算）时把整条路线发给小地图
             if (path != null) {
                 val pk = "${path.pathid}:${path.allLength}"
+                if (pk != observedRouteKey) {
+                    observedRouteKey = pk
+                    uiRoutePlannedAt = System.currentTimeMillis()
+                    if (!rerouting) uiRouteState = if (gpsWeakSent) "GPS 信号弱，沿用当前路线" else "导航中"
+                }
                 if (pk != lastRouteKey) {
                     try {
                         val cl = path.coordList
@@ -451,7 +500,10 @@ object NaviBridge {
                 pushNav(curDir, est, fromRealData = false)
                 if (lightBase >= 0) pushLight(max(0, (lightBase - speed * ((now() - lightAt) / 1000.0 + leadS())).roundToInt()))
             }
+            if (uiLastInfoAt > 0L && now() - uiLastInfoAt > 5_000L) pushLight(-1)
+            expireSafety(now())
             trackCamera()
+            sendRouteMeta()
             if (now() - lastTrafficAt > 60_000) pushTraffic()                      // v4.9 每分钟刷新一次路况
             handler.postDelayed(this, TICK_MS)
         }
@@ -507,6 +559,8 @@ object NaviBridge {
             ShareGuide.stop()
             active = false
             handler.removeCallbacks(tick)
+            NaviVoice.resetManeuver()
+            uiRouteState = if (arrived) "已到达" else "已结束"
             lastInfo = info
             shownDir = ""; shownDist = -1
             pushNextTurns(emptyList())
@@ -633,8 +687,9 @@ object NaviBridge {
     // ================= v1.7：车速 =================
 
     private fun onLocation(loc: AMapNaviLocation, epoch: Long) {
-        val kmh = loc.speed.roundToInt().coerceAtLeast(0)
-        speedKmhNow = kmh
+        val reliable = loc.accuracy.isFinite() && loc.accuracy in 0f..50f
+        val kmh = if (reliable) loc.speed.roundToInt().coerceAtLeast(0) else -1
+        speedKmhNow = kmh.coerceAtLeast(0)
         uiSpeed = kmh                                                            // v3.0
         val c = loc.coord
         val receivedAt = now()
@@ -651,9 +706,9 @@ object NaviBridge {
             RideRecorder.onFix(idleLat,idleLng,fixStamp,receivedWall,idleAccuracy,idleSpeed)
             if (c != null) {
                 myLat = c.latitude; myLng = c.longitude
-                if (active) addTrip(c.latitude, c.longitude, kmh)                 // v7.9
+                if (active && reliable) addTrip(c.latitude, c.longitude, kmh)    // v7.9
                 ShareGuide.onLocation(c.latitude, c.longitude)                    // v4.5
-                MapFeeder.onLocation(c.latitude, c.longitude, loc.bearing, kmh)   // v2.0 小地图
+                MapFeeder.onLocation(c.latitude, c.longitude, loc.bearing, kmh.coerceAtLeast(0), loc.accuracy)   // v2.0 小地图
             }
             val m = "#v,$kmh"
             if (m != lastSpeedMsg) {
@@ -686,18 +741,19 @@ object NaviBridge {
         // v3.4 前方 1 公里内的电子眼位置发给圆屏，画在小地图上："#c,坐标系,x,y,限速,图标,..."
         // v4.7 和道路安全提示合在一起发（pushCamMap），最多 10 个
         val pts = ArrayList<MapPt>()
+        val cameraAt = now()
         arr?.forEach { item ->
             if (item is AMapNaviCameraInfo && item.cameraDistance in 0..1000 && item.x != 0.0) {
                 val p = MapFeeder.toFrame(item.y, item.x) ?: return@forEach
-                pts.add(MapPt(p[0], p[1], max(0, item.cameraSpeed), CamIcons.iconOf(item.cameraType), item.cameraDistance))
+                pts.add(MapPt(p[0], p[1], max(0, item.cameraSpeed), CamIcons.iconOf(item.cameraType), item.cameraDistance, cameraAt))
             }
         }
         handler.post { navCamPts = pts; pushCamMap() }
         camRaw = "${n}个：$all（${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA).format(java.util.Date())}）"
         handler.post {
-            lastCamAt = now()
             if (b != null) {
                 // 新的（或同一个）测速点：开始跟踪
+                lastCamAt = now()
                 if (lim != camLimit || camLat != lat || camLng != lng) camMinDist = Int.MAX_VALUE   // 换了一个测速点
                 camLimit = lim; camLat = lat; camLng = lng
                 camBaseDist = dist
@@ -712,7 +768,7 @@ object NaviBridge {
     /** 每 200 毫秒：用当前位置算到测速点的直线距离，经过之后自动消失 */
     private fun trackCamera() {
         if (camLimit <= 0) return
-        if (now() - lastCamAt > CAMERA_TIMEOUT_MS) { clearCamera(); return }
+        if (now() - lastCamAt > SAFETY_TIMEOUT_MS) { clearCamera(); return }
         if (camLat == 0.0 || myLat.isNaN()) return
         val d = distM(myLat, myLng, camLat, camLng).roundToInt()
         if (d > cameraRange() + 150) { clearCamera(); return }
@@ -860,7 +916,7 @@ object NaviBridge {
                     "onGetNavigationText" -> NaviVoice.onNaviText(args?.lastOrNull { it is String } as? String, usingComponent)
                     // v3.0 算路结果交给选路线页面
                     "onCalculateRouteSuccess" -> { val cb = routeCallback; val a = args?.getOrNull(0); handler.post { if (arrivalSession.isOpen(epoch)) { cb?.invoke(true, a); setRerouting(false); ShareGuide.onCalcDone(true) } } }
-                    "onCalculateRouteFailure" -> { val cb = routeCallback; val a = args?.getOrNull(0); handler.post { if (arrivalSession.isOpen(epoch)) { cb?.invoke(false, a); setRerouting(false); ShareGuide.onCalcDone(false) } } }
+                    "onCalculateRouteFailure" -> { val cb = routeCallback; val a = args?.getOrNull(0); handler.post { if (arrivalSession.isOpen(epoch)) { cb?.invoke(false, a); setRerouting(false, failed = true); ShareGuide.onCalcDone(false) } } }
                     // v4.5 偏航：按分享路线导航时，高德重算完我们再按原路线重新规划；v4.9 圆屏显示“重新规划中”
                     "onReCalculateRouteForYaw" -> handler.post { setRerouting(true); ShareGuide.onYaw() }
                     "onReCalculateRouteForTrafficJam" -> handler.post { setRerouting(true) }
@@ -909,17 +965,27 @@ object NaviBridge {
     private val suggestTimeout = Runnable { clearSuggest() }
 
     /** 重新规划中：圆屏显示 REROUTING（只在导航进行中） */
-    fun setRerouting(on: Boolean) {
+    fun setRerouting(on: Boolean, failed: Boolean = false) {
         if (on && !active) return
+        if (on == rerouting && !failed) return
+        uiRouteState = when {
+            on -> "正在重新规划"
+            failed && uiHasInfo -> "重算失败，沿用上一条路线"
+            failed -> "规划失败"
+            else -> "导航中"
+        }
         if (on == rerouting) return
         rerouting = on
         BleLink.send(if (on) "#y,1" else "#y,0")
+        sendRouteMeta()
     }
 
     private fun setGpsWeak(w: Boolean) {
         if (w == gpsWeakSent) return
         gpsWeakSent = w
         BleLink.send(if (w) "#x,1" else "#x,0")
+        if (!rerouting && active) uiRouteState = if (w) "GPS 信号弱，沿用当前路线" else "导航中"
+        sendRouteMeta()
         extraInfo = if (w) "GPS 信号弱" else "GPS 信号恢复"
     }
 
@@ -992,9 +1058,20 @@ object NaviBridge {
     private class MapPt(val x: Int, val y: Int, val spd: Int, val icon: Int, val dist: Int, val at: Long = 0L)
     private var navCamPts: List<MapPt> = emptyList()           // 导航中的电子眼（updateCameraInfo）
     private var cruiseCamPts: List<MapPt> = emptyList()        // 巡航中的电子眼
-    private val facPts = LinkedHashMap<String, MapPt>()        // 道路安全提示（按位置合并，20 秒没更新就去掉）
+    private val facPts = LinkedHashMap<String, MapPt>()        // 道路安全提示（按位置合并，统一到期）
     private var aimlessListener: Any? = null
     private val cruiseIdle = CruiseIdleTimer()
+
+    private fun expireSafety(t: Long) {
+        val nav = navCamPts.filter { it.at > 0L && t - it.at <= SAFETY_TIMEOUT_MS }
+        val cruise = cruiseCamPts.filter { it.at > 0L && t - it.at <= SAFETY_TIMEOUT_MS }
+        val facilitiesExpired = facPts.values.removeAll { t - it.at > SAFETY_TIMEOUT_MS }
+        if (nav.size != navCamPts.size || cruise.size != cruiseCamPts.size || facilitiesExpired) {
+            navCamPts = nav
+            cruiseCamPts = cruise
+            pushCamMap()
+        }
+    }
 
     private val cruiseTick = object : Runnable {
         override fun run() {
@@ -1006,9 +1083,8 @@ object NaviBridge {
                 cruiseRaw = lastInfo
                 return
             }
+            expireSafety(t)
             trackCamera()
-            if (facPts.values.removeAll { t - it.at > 20_000 }) pushCamMap()
-            if (cruiseCamPts.isNotEmpty() && cruiseCamPts[0].at != 0L && t - cruiseCamPts[0].at > 20_000) { cruiseCamPts = emptyList(); pushCamMap() }
             handler.postDelayed(this, 300)
         }
     }

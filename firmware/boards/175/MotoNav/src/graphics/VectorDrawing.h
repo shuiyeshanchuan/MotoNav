@@ -315,6 +315,45 @@ void drawUturn(uint16_t col, float cy, float k) {
   arrowHead(ox - R, oy + DOWN, 180, HEAD, col);
 }
 
+// Keep a roundabout distinct from a U-turn: the entry joins a circular island,
+// then the selected exit points left, right, or straight ahead.
+void drawRoundabout(const String &dir, uint16_t col, float cy, float k) {
+  const float r = 43 * k, w = 20 * k, cx = CX, iy = cy - 14 * k;
+  float px = cx + r, py = iy;
+  for (int i = 1; i <= 24; i++) {
+    float a = 2 * PI * i / 24;
+    float nx = cx + r * cosf(a), ny = iy + r * sinf(a);
+    thickLine(px, py, nx, ny, w, col);
+    px = nx; py = ny;
+  }
+  thickLine(cx, iy + r, cx, iy + 105 * k, w, col);
+  if (dir == "RL") {
+    thickLine(cx - r, iy, cx - 93 * k, iy, w, col);
+    arrowHead(cx - 93 * k, iy, -90, 30 * k, col);
+  } else if (dir == "RR") {
+    thickLine(cx + r, iy, cx + 93 * k, iy, w, col);
+    arrowHead(cx + 93 * k, iy, 90, 30 * k, col);
+  } else if (dir == "RU") {
+    thickLine(cx - r, iy, cx - 78 * k, iy, w, col);
+    thickLine(cx - 78 * k, iy, cx - 78 * k, iy + 50 * k, w, col);
+    arrowHead(cx - 78 * k, iy + 50 * k, 180, 30 * k, col);
+  } else {
+    thickLine(cx, iy - r, cx, iy - 83 * k, w, col);
+    arrowHead(cx, iy - 83 * k, 0, 30 * k, col);
+  }
+}
+
+// A motorway fork has two visible branches; only the selected branch is bright.
+void drawFork(bool left, uint16_t col, float cy, float k) {
+  const float cx = CX, splitY = cy + 19 * k, stemY = cy + 102 * k;
+  const float endY = cy - 68 * k, armX = 76 * k;
+  const uint16_t secondary = C_DIM;
+  thickLine(cx, stemY, cx, splitY, 24 * k, col);
+  thickLine(cx, splitY, cx - armX, endY, 20 * k, left ? col : secondary);
+  thickLine(cx, splitY, cx + armX, endY, 20 * k, left ? secondary : col);
+  arrowHead(cx + (left ? -armX : armX), endY, left ? -40 : 40, 34 * k, col);
+}
+
 void drawArrive(uint16_t col, float cy, float k) {
   iconCircle(CX, cy, 88 * k, col);
   iconCircle(CX, cy, 43 * k, C_BLACK);
@@ -344,6 +383,8 @@ void drawBigIconAt(const String &dir, uint16_t col, float cy, float laneK,
   iconBegin();
   if (dir == "U")              drawUturn(col, cy, 0.70f * laneK);
   else if (dir == "A")         drawArrive(col == C_WHITE ? C_GREEN : col, cy, 0.78f * laneK);
+  else if (dir == "RB" || dir == "RL" || dir == "RR" || dir == "RU") drawRoundabout(dir, col, cy, 0.88f * laneK);
+  else if (dir == "FL" || dir == "FR") drawFork(dir == "FL", col, cy, 0.88f * laneK);
   else if (dirAngle(dir, deg)) drawTurn(deg, col, cy, 0.78f * laneK);
   else                         drawTurn(0, col, cy, 0.62f * laneK);   // 直行
   iconFitAt(cx, top, bottom, maxW);
@@ -403,6 +444,8 @@ void drawPreview(const String &dir, float cy, float k, float top, float bottom) 
   iconBegin();
   if (dir == "U")              drawPreviewUturn(cy, k);
   else if (dir == "A")         drawPreviewArrive(cy, k);
+  else if (dir == "RB" || dir == "RL" || dir == "RR" || dir == "RU") drawRoundabout(dir, C_DIM, cy, k);
+  else if (dir == "FL" || dir == "FR") drawFork(dir == "FL", C_DIM, cy, k);
   else if (dirAngle(dir, deg)) drawPreviewTurn(deg, cy, k);
   iconFit(top, bottom, ICON_MAX_W);
   iconEnd();

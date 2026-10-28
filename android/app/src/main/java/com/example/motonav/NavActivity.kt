@@ -9,6 +9,8 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -95,6 +97,8 @@ class NavActivity : AppCompatActivity() {
     private var lastBack = 0L
     private var arrivedAt = 0L
     private var nearShown: Boolean? = null
+    private var networkCheckedAt = 0L
+    private var internetAvailable = true
 
     @Suppress("DEPRECATION")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -137,7 +141,7 @@ class NavActivity : AppCompatActivity() {
         }, FrameLayout.LayoutParams(-1, dp(150)))
 
         buildTurnCard()
-        mapStatus = TextView(this).apply { textSize=11f; setTextColor(S.SUB); maxLines=3; setPadding(0,dp(6),0,0) }
+        mapStatus = TextView(this).apply { textSize=11f; setTextColor(S.SUB); maxLines=4; setPadding(0,dp(6),0,0) }
         turnCard.addView(mapStatus)
         buildSide()
         buildBottomBar()
@@ -238,6 +242,7 @@ class NavActivity : AppCompatActivity() {
             NaviVoice.muted = muted
             NaviVoice.applyTo(n)
             ShareGuide.naviType = if (emulate) 2 else 1               // v4.5
+            if (NaviBridge.directRouteMode == LocalRouting.BICYCLE) n.setIsNaviTravelView(true)
             Refl.call(n, "setMultipleRouteNaviMode", ShareGuide.route?.isTravel != true && NaviBridge.directRouteMode != LocalRouting.BICYCLE)
             if (emulate) n.setEmulatorNaviSpeed(emuSpeeds[emuIdx])
             if (!NaviBridge.beginNavigation(emulate)) {
@@ -512,6 +517,13 @@ class NavActivity : AppCompatActivity() {
 
     private fun update() {
         val B = NaviBridge
+        val clock = SystemClock.elapsedRealtime()
+        if (clock - networkCheckedAt > 3_000L) {
+            networkCheckedAt = clock
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            internetAvailable = cm?.getNetworkCapabilities(cm.activeNetwork)
+                ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
+        }
         val linkReady = BleLink.isConnected && BleLink.verified
         val guidanceState = when {
             !linkReady -> "圆屏连接已断开"
@@ -519,8 +531,13 @@ class NavActivity : AppCompatActivity() {
             B.uiLastInfoAt > 0L && SystemClock.elapsedRealtime() - B.uiLastInfoAt > 3000L -> "导航数据暂无更新"
             else -> "圆屏已连接 · 导航数据正常"
         }
+        val routeTime = B.uiRoutePlannedAt.takeIf { it > 0L }
+            ?.let { android.text.format.DateFormat.format("HH:mm", it).toString() } ?: "--:--"
+        val routeState = if (!emulate && !internetAvailable && B.uiHasInfo)
+            "网络不可用，沿用当前路线" else B.uiRouteState
         mapStatus.text = MapFeeder.loadingStatus() + "\n" + guidanceState + " · " +
-            if (emulate) "模拟导航 · 不记录轨迹" else RideRecorder.status()
+            (if (emulate) "模拟导航 · 不记录轨迹" else RideRecorder.status()) + "\n" +
+            "${B.uiRouteSource.ifBlank { "路线来源未知" }} · $routeState · 规划 $routeTime"
         // v4.9 更快路线提示
         if (B.uiSuggestMin > 0) {
             suggestText.text = "发现更快的路线，能省约 ${B.uiSuggestMin} 分钟"
@@ -576,12 +593,13 @@ class NavActivity : AppCompatActivity() {
         speedNum.text = if (sp >= 0) "$sp" else "--"
         speedNum.setTextColor(if (over) S.RED else S.TEXT)
         (speedBox.background as? GradientDrawable)?.setStroke(dp(2), if (over) S.RED else S.STROKE)
-        speedLimitText.visibility = if (lim > 0) View.VISIBLE else View.GONE
-        speedLimitText.text = if (over) "超速 · 限速 $lim" else "限速 $lim"
+        speedLimitText.visibility = View.VISIBLE
+        speedLimitText.text = if (lim <= 0) "限速无数据" else if (over) "超速 · 限速 $lim" else "限速 $lim"
         speedLimitText.setTextColor(if (over) S.RED else S.SUB)
         val ld = B.uiLightDist
-        if (ld >= 0) { lightChip.visibility = View.VISIBLE; lightChip.text = "红绿灯\n${(ld + 5) / 10 * 10}米" }
-        else lightChip.visibility = View.GONE
+        lightChip.visibility = View.VISIBLE
+        lightChip.text = if (ld >= 0) "红绿灯\n${(ld + 5) / 10 * 10}米" else "红绿灯\n无数据"
+        lightChip.setTextColor(if (ld >= 0) S.TEXT else S.SUB)
         if (lim > 0) {
             camBox.visibility = View.VISIBLE
             camSign.text = "$lim"
@@ -601,7 +619,8 @@ class NavActivity : AppCompatActivity() {
         val (num, unit) = S.distParts(distance)
         val action = when (dir) {
             "L" -> "左转"; "R" -> "右转"; "SL" -> "左前方"; "SR" -> "右前方"
-            "U" -> "掉头"; "S" -> "直行"; else -> "转弯"
+            "U" -> "掉头"; "S" -> "直行"; "RL" -> "环岛左转"; "RR" -> "环岛右转"
+            "RB" -> "进入环岛"; "RU" -> "环岛掉头"; "FL" -> "靠左"; "FR" -> "靠右"; else -> "转弯"
         }
         val roadPart = road.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
         val value = "$prefix：$action · $num $unit$roadPart"

@@ -41,12 +41,16 @@ void drawMapBadge() {
     int up = tripOn ? 24 : 0;                          // v3.1 有行程信息时整体上移，下面留一行
     drawBigIconAt((isS || far) ? String("S") : navDir, C_WHITE, 395 - up, 1.0f, CX - 48, 368 - up, 418 - up, 60);
     int sz = dt.length() <= 4 ? 4 : 3;
-    printOutlined(dt, CX + 46, (sz == 4 ? 378 : 382) - up, sz, C_WHITE);
+    if (navLargeText || navFocus == 2) sz = min(sz + 1, 5);
+    printOutlined(dt, CX + 46, (sz >= 4 ? 378 : 382) - up, sz,
+                  navLightMode == 2 ? C_YELLOW : C_WHITE);
     if (tripOn) drawTripLine(404);
   } else {
     const int top = 344;                               // v3.3 车道移到了上面，底部只放箭头和距离
     drawBigIconAt(navDir, col, top + 30, 1.0f, CX - 58, top, top + 60, 84);
-    printOutlined(dt, CX + 54, top + 14, dt.length() <= 4 ? 5 : 4, col);
+    int sz = dt.length() <= 4 ? 5 : 4;
+    if (navLargeText || navFocus == 2) sz = min(sz + 1, 6);
+    printOutlined(dt, CX + 54, top + 14, sz, navLightMode == 2 ? C_YELLOW : col);
   }
   iconHalo = false;
 }
@@ -211,6 +215,20 @@ void drawNavHints(int bannerY) {
     gfx->drawLine(gx - 11, gy + 9, gx + 11, gy - 9, C_RED);
     gfx->drawLine(gx - 11, gy + 10, gx + 11, gy - 8, C_RED);
   }
+}
+
+// 一行路线事实，放在地图下沿或大箭头页底部，不覆盖车速、箭头和转弯距离。
+void drawRouteMeta(int y) {
+  if (routeSource < 1 || routeSource > 4) return;
+  const char *sources[] = {"", "AMAP CAR", "AMAP BIKE", "AMAP SHARE", "MOTOR"};
+  const char *states[] = {"READY", "NAV", "REROUTE", "HOLD", "GPS WEAK", "ARRIVED"};
+  char timeText[6] = "--:--";
+  if (routePlannedHHMM >= 0 && routePlannedHHMM <= 2359 && routePlannedHHMM % 100 < 60)
+    snprintf(timeText, sizeof(timeText), "%02d:%02d", routePlannedHHMM / 100, routePlannedHHMM % 100);
+  String line = String(sources[routeSource]) + " " + timeText + " " + states[constrain(routeState, 0, 5)];
+  const int w = line.length() * 6 + 16;
+  dimRect(CX - w / 2, y - 4, w, 15, 7, 52);
+  printCentered(line, CX, y, 1, routeState == 2 ? C_ORANGE : routeState == 3 ? C_YELLOW : C_CYAN);
 }
 
 // v3.8 顶部车速/测速牌/车道、底部箭头和行程信息、车头箭头占的地方（这些后画，电子眼图标要提前让开）

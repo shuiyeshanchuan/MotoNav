@@ -183,7 +183,27 @@ void loop() {
   if (lastControlMask != controlMask) { lastControlMask = controlMask; pendingMediaStatus = String("AMC,") + controlMask; musicDirty = true; Serial.printf("MEDIA AMS controls=%d\n", controlMask); }
   if (appleMedia.controlAck) { musicAck = appleMedia.controlAck > 0 ? 9 : 10; appleMedia.controlAck = 0; musicAckUntil = millis() + 2500; musicDirty = true; }
   if (appleMedia.changed) {
-    appleMedia.changed = false; musicDirty = true;
+    appleMedia.changed = false;
+    static uint32_t musicGeneration = 0;
+    static uint16_t musicTitleRevision = 0, musicArtistRevision = 0, musicDurationRevision = 0;
+    static bool musicAvailable = false, musicPlaybackKnown = false;
+    static int musicPlaybackState = -1;
+    // AMS also reports elapsed-time corrections. Those update only the time
+    // label; repaint lyrics, title and controls only when their inputs change.
+    if (musicGeneration != appleMedia.generation ||
+        musicTitleRevision != appleMedia.values[0].revision ||
+        musicArtistRevision != appleMedia.values[1].revision ||
+        musicDurationRevision != appleMedia.values[3].revision ||
+        musicAvailable != appleMedia.available ||
+        musicPlaybackKnown != appleMedia.playback.known ||
+        musicPlaybackState != appleMedia.playback.state) musicDirty = true;
+    musicGeneration = appleMedia.generation;
+    musicTitleRevision = appleMedia.values[0].revision;
+    musicArtistRevision = appleMedia.values[1].revision;
+    musicDurationRevision = appleMedia.values[3].revision;
+    musicAvailable = appleMedia.available;
+    musicPlaybackKnown = appleMedia.playback.known;
+    musicPlaybackState = appleMedia.playback.state;
     static uint32_t lyricGeneration = 0; static uint16_t lyricTitleRevision = 0, lyricArtistRevision = 0;
     if (lyricGeneration != appleMedia.generation || lyricTitleRevision != appleMedia.values[0].revision || lyricArtistRevision != appleMedia.values[1].revision) {
       lyricImageGeneration = 0;
@@ -192,8 +212,6 @@ void loop() {
     }
     if (hidMusicMode) { musicHave = appleMedia.available && appleMedia.values[0].text.length(); musicPlaying = appleMedia.playback.known && appleMedia.playback.state == 1; }
   }
-  static unsigned long mediaDrawAt = 0;
-  if (hidMusicMode && appleMedia.available && millis() - mediaDrawAt >= 1000) { mediaDrawAt = millis(); musicDirty = true; }
   saveRotIfDue();                                      // v6.4
   // v6.5 连上 60 秒还没通过验证（不是自己的手机）：断开，让自己的手机能连
 #if defined(CONFIG_NIMBLE_ENABLED)
@@ -273,16 +291,36 @@ void loop() {
     else if (inNav) navDirty = true;
     else drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
   }
-  // v5.1 来电：整屏显示（约 12 帧/秒的动画），结束后回到原来的画面
+  // Phone call expands the notification island over the current page.
   static bool wasCall = false;
   if (callOn && (millis() - callSeenAt > 120000 || !conn)) callOn = false;      // 2 分钟没消息 / 断开：收起
-  if (callOn && sliding) dragAbort();                  // v5.5 拖到一半来电：放弃换页
-  if (callOn && !powerMenuOn) {
+  if (callOn && !wasCall && !pairOn && !powerMenuOn) {
+    if (sliding) dragAbort();
+    renderPage(page);  // 清除先前的灯卡/通知岛，避免过期像素留在来电岛外。
+    if (inNav && page == 0 && staleShown) drawStaleOverlay();
+    callIslandDrawn = false;
+  }
+  if (callOn && !pairOn && !powerMenuOn) {
     static unsigned long lastCallDraw = 0;
-    if (millis() - lastCallDraw > 80) { lastCallDraw = millis(); drawCallScreen(); }
+    if (!callIslandDrawn || millis() - lastCallDraw > (touchDown ? 32UL : 80UL)) { lastCallDraw = millis(); drawCallScreen(); }
     wasCall = true;
-  } else if (wasCall) {
+  } else if (wasCall && !pairOn && !powerMenuOn) {
     wasCall = false;
+    callIslandDrawn = false;
+    if (page == 2) musicDirty = true;
+    else if (page == 1) wxDirty = true;
+    else if (inNav) navDirty = true;
+    else drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
+  }
+
+  // Transient notices expire on the device even if the phone fails to send a clear event.
+  if (noticeKind && (!conn || (int32_t)(millis() - noticeUntil) >= 0 ||
+      (noticeKind == 1 && !callOn && millis() - noticeAt > 1000))) {
+    noticeKind = 0;
+    noticeDirty = true;
+  }
+  if (!noticeKind && noticeDirty && !callOn && !pairOn && !powerMenuOn && !sliding) {
+    noticeDirty = false;
     if (page == 2) musicDirty = true;
     else if (page == 1) wxDirty = true;
     else if (inNav) navDirty = true;
@@ -313,6 +351,7 @@ void loop() {
   weatherTick();                                       // v5.3 天气页
   if (inNav && navDirty && !fxOn && !callOn && !pairOn && !powerMenuOn && page == 0 && !sliding) {
     drawNavFrame();
+    if (staleShown) drawStaleOverlay();
     navDirty = false;
   }
 
@@ -324,26 +363,46 @@ void loop() {
 
   // Compose over navigation, never replace the screen or alter route/arrival state.
   const uint32_t lightNow=millis();
-  if (!conn || !trafficLightLab.valid(lightNow)) trafficLightLab.clear();
+  if (!conn || !trafficLightFrame.valid(lightNow) || !trafficLightLab.valid(lightNow)) trafficLightLab.clear();
   const bool lightPreview=trafficLightPreviewUntil && (int32_t)(trafficLightPreviewUntil-lightNow)>0;
   if(!lightPreview)trafficLightPreviewUntil=0;
-  const bool showLight=(trafficLightLab.valid(lightNow) || trafficLightFrame.valid(lightNow) || lightPreview) && conn && page==0 && !sliding && !pairOn && !callOn && !fxOn && !powerMenuOn && !staleShown;
+  const bool lightLease=trafficLightFrame.valid(lightNow) || lightPreview;
+  const bool lightPageReady=conn && page==0 && !sliding && !pairOn && !callOn && !fxOn && !powerMenuOn && !staleShown;
+  const bool showLight=lightLease && lightPageReady;
   static bool lightShown=false;
   static uint32_t lightDrawAt=0;
+  static uint32_t lightExpiredAt=0;
   animateCat();
   if(showLight) {
+    lightExpiredAt=0;
     if(!lightShown || needFlush || lightNow-lightDrawAt>=200) {
       drawTrafficLightLab(lightNow);lightDrawAt=lightNow;
     }
   } else if(lightShown && !pairOn && !callOn && !fxOn && !powerMenuOn && !sliding) {
+    if(lightPageReady && !lightLease)lightExpiredAt=lightNow ? lightNow : 1;
     if(page==2)musicDirty=true;
     else if(page==1)wxDirty=true;
     else if(inNav)navDirty=true;
     else drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
   }
+  if(lightExpiredAt && lightPageReady && !showLight) {
+    const uint32_t age=lightNow-lightExpiredAt;
+    if(age<320)drawTrafficLightExpired(age);
+    else {
+      lightExpiredAt=0;
+      if(inNav)navDirty=true;
+      else drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
+    }
+  } else if(!lightPageReady)lightExpiredAt=0;
   if(lightShown!=showLight)Serial.printf("TL OVERLAY visible=%d inNav=%d at=%lu valid=%d conn=%d page=%d sliding=%d pair=%d call=%d fx=%d stale=%d\n",
     showLight,inNav,lightNow,trafficLightLab.valid(lightNow),conn,page,sliding,pairOn,callOn,fxOn,staleShown);
   lightShown=showLight;
+
+  if (noticeKind && !callOn && !pairOn && !fxOn && !powerMenuOn && !sliding &&
+      (noticeDirty || needFlush)) {
+    drawNotificationIsland();
+    noticeDirty = false;
+  }
 
   // Packets and connection events may have drawn behind the modal this loop.
   if (powerMenuOn && needFlush) drawPowerMenu();

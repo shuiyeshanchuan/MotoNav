@@ -39,7 +39,8 @@ data class MotorStep(val instruction: String, val road: String, val action: Stri
 }
 data class WebMotorRoute(val request: MotorRequest, val points: List<DoubleArray>,
                          val steps: List<MotorStep>, val distance: Int, val seconds: Int, val lights: Int,
-                         val key: String = "webmotor-" + UUID.randomUUID()) {
+                         val key: String = "webmotor-" + UUID.randomUUID(),
+                         val plannedAtMs: Long = 0L) {
     fun tracker() = MotorTrack(points.toTypedArray())
 }
 
@@ -138,6 +139,7 @@ object WebMotorRoutes {
         require(json.optInt("code") == 1) { "摩托车算路失败：${json.optString("message", "服务未说明原因").take(160)}" }
         val paths = json.optJSONArray("data") ?: error("网页没有返回摩托车路线")
         require(paths.length() in 1..10) { "网页未返回有效路线" }
+        val plannedAtMs = System.currentTimeMillis()
         return (0 until paths.length()).map { routeIndex ->
             val path = paths.getJSONObject(routeIndex)
             val rawSteps = path.optJSONArray("steps") ?: error("路线缺少转向指令")
@@ -166,7 +168,7 @@ object WebMotorRoutes {
             }
             val cost = path.optJSONObject("cost")
             WebMotorRoute(request, points, steps, path.optInt("distance"), cost?.optInt("duration") ?: 0,
-                cost?.optInt("traffic_lights") ?: 0).also { it.tracker() }
+                cost?.optInt("traffic_lights") ?: 0, plannedAtMs = plannedAtMs).also { it.tracker() }
         }
     }
 }

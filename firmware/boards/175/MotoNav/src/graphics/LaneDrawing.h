@@ -135,6 +135,14 @@ void drawLanesAt(float centerX, float y0, float maxW, float h) {
   }
   float lw = fminf(36 * h / 32, maxW / laneN);
   float x0 = centerX - lw * laneN / 2;
+  // A bounded backing and underline keep recommended lanes recognizable when
+  // eight narrow glyphs are shown together or over a detailed map.
+  for (int i = 0; i < laneN; i++) {
+    if (laneFr[i] == 0xF) continue;
+    int left = rnd(x0 + lw * i + 2), width = max(1, (int)rnd(lw - 4));
+    gfx->fillRoundRect(left, rnd(y0 - 2), width, rnd(h + 4), 5, 0x0862);
+    gfx->drawFastHLine(left + 3, rnd(y0 + h), max(1, width - 6), C_CYAN);
+  }
   // 1. 记录所有车道的图形
   primN = 0; recIcon = true;
   for (int i = 0; i < laneN; i++) {

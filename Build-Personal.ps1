@@ -5,6 +5,10 @@ $root=$PSScriptRoot
 $project=Join-Path $root 'android'
 $tools=Join-Path $root '.tools'
 New-Item -ItemType Directory -Force $tools | Out-Null
+$temp=Join-Path $tools 'tmp'
+New-Item -ItemType Directory -Force $temp | Out-Null
+$env:TEMP=$temp
+$env:TMP=$temp
 if(-not $env:GRADLE_USER_HOME){$env:GRADLE_USER_HOME=Join-Path $tools 'gradle-cache'}
 function Download($url,$path) {
     if(-not(Test-Path -LiteralPath $path)) {
