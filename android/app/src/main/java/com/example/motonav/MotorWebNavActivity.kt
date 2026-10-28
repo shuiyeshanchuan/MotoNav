@@ -138,7 +138,7 @@ class MotorWebNavActivity : AppCompatActivity() {
         column.addView(distanceText);column.addView(roadText)
         row.addView(column,LinearLayout.LayoutParams(0,-2,1f));turnCard.addView(row)
         statusText=text(11f,S.SUB).apply{
-            isSingleLine=true;ellipsize=TextUtils.TruncateAt.END;setPadding(dp(2),dp(8),0,0);minHeight=dp(24)
+            isSingleLine=true;ellipsize=TextUtils.TruncateAt.END;setPadding(dp(2),dp(8),0,0);minHeight=dp(48)
             contentDescription="导航和圆屏状态，点按查看详情";setOnClickListener{showStatusDetails()}
         }
         turnCard.addView(statusText)
@@ -159,7 +159,7 @@ class MotorWebNavActivity : AppCompatActivity() {
         planButton=circle("规划",S.CYAN).apply{
             contentDescription="返回路线规划，保持导航";setOnClickListener{finish()}
         }
-        root.addView(planButton,FrameLayout.LayoutParams(dp(46),dp(46),Gravity.TOP or Gravity.END).apply{
+        root.addView(planButton,FrameLayout.LayoutParams(dp(48),dp(48),Gravity.TOP or Gravity.END).apply{
             rightMargin=dp(12);topMargin=dp(146)
         })
     }
@@ -172,7 +172,8 @@ class MotorWebNavActivity : AppCompatActivity() {
     }
     private fun circle(value:String,color:Int)=TextView(this).apply{
         text=value;textSize=12f;setTextColor(color);typeface=S.BOLD;gravity=Gravity.CENTER
-        background=GradientDrawable().apply{shape=GradientDrawable.OVAL;setColor(S.CARD2)}
+        minWidth=dp(48);minHeight=dp(48)
+        background=S.round(this@MotorWebNavActivity,S.CARD2,12f)
         elevation=S.dp(this@MotorWebNavActivity,2f)
     }
     private fun buildBottomCard(){
@@ -201,12 +202,12 @@ class MotorWebNavActivity : AppCompatActivity() {
                 styleControls()
             }
         }
-        val exit=circle("✕",S.RED).apply{
-            textSize=18f;contentDescription="退出导航，长按可直接退出"
+        val exit=circle("退出",S.RED).apply{
+            contentDescription="退出导航，长按可直接退出"
             setOnClickListener{confirmExit()};setOnLongClickListener{WebMotorGuide.stop();finish();true}
         }
         for(button in listOf(overviewButton,muteButton,exit)){
-            row.addView(button,LinearLayout.LayoutParams(dp(46),dp(46)).apply{leftMargin=dp(6)})
+            row.addView(button,LinearLayout.LayoutParams(dp(48),dp(48)).apply{leftMargin=dp(6)})
         }
         bottomCard.addView(row)
         if(WebMotorGuide.simulation){
@@ -222,8 +223,8 @@ class MotorWebNavActivity : AppCompatActivity() {
                     styleControls()
                 }
             }
-            simRow.addView(pauseButton,LinearLayout.LayoutParams(dp(70),dp(36)))
-            simRow.addView(simSpeedButton,LinearLayout.LayoutParams(dp(96),dp(36)).apply{leftMargin=dp(8)})
+            simRow.addView(pauseButton,LinearLayout.LayoutParams(dp(70),dp(48)))
+            simRow.addView(simSpeedButton,LinearLayout.LayoutParams(dp(96),dp(48)).apply{leftMargin=dp(8)})
             bottomCard.addView(simRow)
         }
         root.addView(bottomCard,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(10),0,dp(10),dp(8))})
@@ -244,7 +245,7 @@ class MotorWebNavActivity : AppCompatActivity() {
             maxLines=2;setPadding(0,dp(8),0,dp(14))
         })
         arrivedCard.addView(chip("完成导航",S.CYAN).apply{setOnClickListener{WebMotorGuide.stop();finish()}},
-            LinearLayout.LayoutParams(-1,dp(44)))
+            LinearLayout.LayoutParams(-1,dp(48)))
         root.addView(arrivedCard,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER).apply{leftMargin=dp(24);rightMargin=dp(24)})
     }
     private fun styleControls(){

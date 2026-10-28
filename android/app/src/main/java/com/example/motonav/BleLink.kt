@@ -72,8 +72,9 @@ object BleLink {
     @Volatile var status = "未连接"
     @Volatile var verified = false               // v6.4 圆屏说这台手机通过了配对验证（"U,1"）
     @Volatile var pairHint = ""                  // v6.4 配对过程的提示（给界面看）
-    @Volatile var screenBattery = ""             // v7.6 圆屏电量（固件 v6.8 起，接了电池才有），例 "85%⚡"
+    @Volatile var screenBattery = ""             // v7.6 圆屏电量（固件 v6.8 起，接了电池才有）
     @Volatile var screenBatteryPct = -1
+    @Volatile var screenBatteryCharging = false
     @Volatile var screenBatteryLevel = 0          // 0 unknown, 1 critical, 2 low, 3 normal
     @Volatile var screenPmuTempC10 = -1           // AXP2101 die temperature, 0.1°C
     @Volatile var screenVbusMv = 0
@@ -382,7 +383,7 @@ object BleLink {
         handler.removeCallbacks(retryRunnable)
         closeCurrent()
         triedDirect = false
-        screenName = ""; screenBattery = ""; screenBatteryPct = -1
+        screenName = ""; screenBattery = ""; screenBatteryPct = -1; screenBatteryCharging = false
         screenBatteryLevel = 0; screenPmuTempC10 = -1; screenVbusMv = 0; screenOtaPower = false
         screenBleStats = ""
         screenBoard = ""; screenFirmware = ""; screenProtocol = -1; screenOtaReady = false; screenOtaStatusKnown = false
@@ -493,13 +494,14 @@ object BleLink {
         if (p.size >= 3 && p[0] == "V") {                // V,百分比,充电,USB,mV,level,temp_C10,vbus_mV,ota_allowed
             val pct = p[1].toIntOrNull() ?: -1
             screenBatteryPct = pct
+            screenBatteryCharging = p[2] == "1"
             screenBatteryLevel = p.getOrNull(5)?.toIntOrNull() ?: 0
             screenPmuTempC10 = p.getOrNull(6)?.toIntOrNull() ?: -1
             screenVbusMv = p.getOrNull(7)?.toIntOrNull() ?: 0
             screenOtaPower = p.getOrNull(8) == "1"
             screenBattery = if (pct < 0) "" else "$pct%" +
-                (if (p[2] == "1") "⚡充电中" else "") +
-                (if (p.size > 3 && p[3] == "1") "🔌" else "")
+                (if (screenBatteryCharging) " · 充电中" else "") +
+                (if (p.size > 3 && p[3] == "1") " · USB供电" else "")
             return
         }
         if (p.size >= 2 && p[0] == "BOOT") {
@@ -676,7 +678,7 @@ object BleLink {
                 failConnection(g, "连接断开（$st）")
             } else if (newState == BluetoothProfile.STATE_CONNECTED &&
                 session.move(g, Phase.CONNECTING, Phase.SERVICES, now(), 12000)) {
-                screenBattery = ""; screenBatteryPct = -1
+                screenBattery = ""; screenBatteryPct = -1; screenBatteryCharging = false
                 screenBatteryLevel = 0; screenPmuTempC10 = -1; screenVbusMv = 0; screenOtaPower = false
                 screenBleStats = ""
                 screenBoard = ""; screenFirmware = ""; screenProtocol = -1; screenOtaReady = false; screenOtaStatusKnown = false

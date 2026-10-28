@@ -1,12 +1,14 @@
 package com.example.motonav
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -221,7 +223,7 @@ class NavActivity : AppCompatActivity() {
             moveTo(s * 0.5f, s * 0.08f); lineTo(s * 0.86f, s * 0.9f); lineTo(s * 0.5f, s * 0.7f); lineTo(s * 0.14f, s * 0.9f); close()
         }
         p.style = Paint.Style.STROKE; p.strokeJoin = Paint.Join.ROUND
-        p.color = Color.parseColor("#66FF4FB4"); p.strokeWidth = s * 0.16f; c.drawPath(path, p)
+        p.color = Color.parseColor("#66155E75"); p.strokeWidth = s * 0.16f; c.drawPath(path, p)
         p.color = S.PINK; p.strokeWidth = s * 0.07f; c.drawPath(path, p)
         p.style = Paint.Style.FILL; p.color = Color.WHITE; c.drawPath(path, p)
         return b
@@ -340,7 +342,7 @@ class NavActivity : AppCompatActivity() {
             elevation = S.dp(this@NavActivity, 8f)
         }
         camDist = TextView(this).apply {
-            setTextColor(Color.WHITE); textSize = 12f; typeface = S.BOLD; gravity = Gravity.CENTER
+            setTextColor(S.TEXT); textSize = 12f; typeface = S.BOLD; gravity = Gravity.CENTER
             background = S.round(this@NavActivity, S.CARD, 9f); setPadding(dp(6), dp(1), dp(6), dp(1))
         }
         camBox.addView(camSign, LinearLayout.LayoutParams(dp(54), dp(54)))
@@ -348,7 +350,7 @@ class NavActivity : AppCompatActivity() {
         sideCol.addView(camBox, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(10) })
         // v3.1 前方红绿灯
         lightChip = TextView(this).apply {
-            textSize = 12f; typeface = S.BOLD; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+            textSize = 12f; typeface = S.BOLD; setTextColor(S.TEXT); gravity = Gravity.CENTER
             background = S.round(this@NavActivity, S.CARD, 12f, S.STROKE)
             setPadding(dp(8), dp(4), dp(8), dp(4)); visibility = View.GONE
         }
@@ -360,7 +362,9 @@ class NavActivity : AppCompatActivity() {
 
     private fun circleBtn(t: String, size: Float, color: Int) = TextView(this).apply {
         text = t; textSize = size; setTextColor(color); gravity = Gravity.CENTER; typeface = S.BOLD
-        background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(S.CARD2) }
+        minWidth = dp(48); minHeight = dp(48)
+        background = RippleDrawable(ColorStateList.valueOf(S.STROKE),
+            S.round(this@NavActivity,S.CARD2,12f),null)
     }
 
     private fun buildBottomBar() {
@@ -381,7 +385,7 @@ class NavActivity : AppCompatActivity() {
         bottomBar.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
         overviewBtn = circleBtn("全览", 12f, S.CYAN).apply { setOnClickListener { toggleOverview() } }
         muteBtn = circleBtn("", 12f, S.TEXT).apply { setOnClickListener { toggleMute() } }
-        val exitBtn = circleBtn("✕", 18f, S.RED).apply {
+        val exitBtn = circleBtn("退出", 12f, S.RED).apply {
             setOnClickListener { Toast.makeText(this@NavActivity, "长按退出导航", Toast.LENGTH_SHORT).show() }
             setOnLongClickListener { exitNav(); true }
         }
@@ -393,7 +397,7 @@ class NavActivity : AppCompatActivity() {
             btns += pauseBtn!!; btns += emuSpeedBtn!!
         }
         btns += overviewBtn; btns += muteBtn; btns += exitBtn
-        val bs = if (emulate) dp(42) else dp(46)
+        val bs = dp(48)
         for (b in btns) bottomBar.addView(b, LinearLayout.LayoutParams(bs, bs).apply { leftMargin = dp(if (emulate) 5 else 6) })
         root.addView(bottomBar, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
             leftMargin = dp(10); rightMargin = dp(10); bottomMargin = dp(10)

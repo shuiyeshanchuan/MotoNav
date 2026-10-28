@@ -1,12 +1,14 @@
 package com.example.motonav
 
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -28,11 +30,11 @@ import java.util.Locale
 import kotlin.math.cos
 
 class RideHistoryActivity : AppCompatActivity() {
-    private val bg = Color.rgb(14,10,20)
-    private val card = Color.rgb(26,20,36)
-    private val text = Color.rgb(243,238,248)
-    private val sub = Color.rgb(157,147,171)
-    private val accent = Color.rgb(67,225,240)
+    private val bg = NavStyle.BG
+    private val card = NavStyle.CARD
+    private val text = NavStyle.TEXT
+    private val sub = NavStyle.SUB
+    private val accent = NavStyle.PINK
     private lateinit var items: LinearLayout
     private lateinit var status: TextView
     private val handler = Handler(Looper.getMainLooper())
@@ -51,7 +53,9 @@ class RideHistoryActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         exportId=savedInstanceState?.getString("export_id")
-        val content = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(18),dp(12),dp(18),dp(24)) }
+        window.statusBarColor=bg
+        window.navigationBarColor=bg
+        val content = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(16),dp(12),dp(16),dp(24)) }
         val scroll = ScrollView(this).apply { setBackgroundColor(bg); addView(content); clipToPadding=true }
         scroll.setOnApplyWindowInsetsListener { v, ins ->
             @Suppress("DEPRECATION")
@@ -60,16 +64,16 @@ class RideHistoryActivity : AppCompatActivity() {
             val bottom=if(Build.VERSION.SDK_INT>=30) ins.getInsets(WindowInsets.Type.systemBars()).bottom else ins.systemWindowInsetBottom
             v.setPadding(0,top,0,bottom); ins
         }
-        content.addView(button("‹ 返回首页") { finish() })
+        content.addView(button("返回") { finish() })
         content.addView(label("骑行轨迹",25f,text).apply { typeface=Typeface.DEFAULT_BOLD })
         val toggle = SwitchCompat(this).apply {
             this.text="自动记录真实导航和巡航"; setTextColor(this@RideHistoryActivity.text); textSize=16f
             isChecked=RideRecorder.enabled
             setOnCheckedChangeListener { _, value -> RideRecorder.setEnabled(value); status.text=RideRecorder.status() }
         }
-        content.addView(toggle)
+        content.addView(toggle,LinearLayout.LayoutParams(-1,dp(56)).apply { topMargin=dp(12) })
         status=label(RideRecorder.status(),13f,accent); content.addView(status)
-        content.addView(label("轨迹保存在本机，不主动上传。模拟导航不记录。卸载会清除记录，重要轨迹请导出 GPX 保存。",13f,sub))
+        content.addView(label("记录仅保存在手机上。需要备份时，可打开轨迹并导出 GPX。",13f,sub))
         content.addView(button("刷新记录") { load() })
         items=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }; content.addView(items)
         setContentView(scroll)
@@ -90,7 +94,8 @@ class RideHistoryActivity : AppCompatActivity() {
             for (s in all.take(100)) {
                 val box=LinearLayout(this).apply {
                     orientation=LinearLayout.VERTICAL; setPadding(dp(14),dp(12),dp(14),dp(12))
-                    background=GradientDrawable().apply { setColor(card); cornerRadius=dp(16).toFloat() }
+                    background=RippleDrawable(ColorStateList.valueOf(NavStyle.CARD2),
+                        NavStyle.round(this@RideHistoryActivity,card,16f,NavStyle.STROKE),null)
                 }
                 box.addView(label(s.title,17f,text).apply { typeface=Typeface.DEFAULT_BOLD; maxLines=2 })
                 val date=SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.CHINA).format(Date(s.start))
@@ -104,7 +109,10 @@ class RideHistoryActivity : AppCompatActivity() {
     }
     private fun detail(s: RideSummary) {
         val box=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(dp(12),0,dp(12),0) }
-        box.addView(TextView(this).apply { this.text="轨迹示意（无底图）\n粉色为轨迹，绿色为起点，橙色为终点。定位中断处不连线。"; textSize=12f; setPadding(0,dp(8),0,dp(8)) })
+        box.addView(TextView(this).apply {
+            text="轨迹示意（无底图）。绿色为起点，棕色为终点；定位中断处不连线。"
+            textSize=13f;setTextColor(sub);setPadding(0,dp(8),0,dp(8))
+        })
         val preview=RidePreview(this)
         box.addView(preview,LinearLayout.LayoutParams(-1,dp(260)))
         val dialog=AlertDialog.Builder(this).setTitle(s.title).setView(box)
@@ -124,7 +132,12 @@ class RideHistoryActivity : AppCompatActivity() {
     }
     private fun dp(n: Int)=(n*resources.displayMetrics.density+0.5f).toInt()
     private fun label(s: String,size: Float,color: Int)=TextView(this).apply { text=s; textSize=size; setTextColor(color); setPadding(0,dp(7),0,dp(7)) }
-    private fun button(s: String,click: () -> Unit)=label(s,15f,accent).apply { minHeight=dp(48); gravity=Gravity.CENTER_VERTICAL; setOnClickListener { click() } }
+    private fun button(s: String,click: () -> Unit)=label(s,15f,accent).apply {
+        minHeight=dp(48); gravity=Gravity.CENTER_VERTICAL
+        setOnClickListener { click() }
+        background=RippleDrawable(ColorStateList.valueOf(NavStyle.CARD2),
+            NavStyle.round(this@RideHistoryActivity,bg,10f),null)
+    }
     private fun toast(s: String)=Toast.makeText(this,s,Toast.LENGTH_LONG).show()
 }
 
@@ -132,8 +145,8 @@ private class RidePreview(c: Context): View(c) {
     var points: List<RidePoint> = emptyList()
     private val paint=Paint(Paint.ANTI_ALIAS_FLAG)
     override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas); canvas.drawColor(Color.rgb(14,10,20))
-        if (points.isEmpty()) { paint.color=Color.LTGRAY; paint.textSize=14*resources.displayMetrics.scaledDensity; canvas.drawText("等待轨迹数据…",20f,height/2f,paint); return }
+        super.onDraw(canvas); canvas.drawColor(NavStyle.CARD2)
+        if (points.isEmpty()) { paint.color=NavStyle.SUB; paint.textSize=14*resources.displayMetrics.scaledDensity; canvas.drawText("等待轨迹数据…",20f,height/2f,paint); return }
         val lat0=points.map { it.lat }.average()
         val scaleX=cos(Math.toRadians(lat0)).coerceAtLeast(0.01)
         val minX=points.minOf { it.lng*scaleX }; val maxX=points.maxOf { it.lng*scaleX }
@@ -144,9 +157,9 @@ private class RidePreview(c: Context): View(c) {
         fun y(p: RidePoint)=(height/2.0-(p.lat-(minY+maxY)/2)*scale).toFloat()
         val path=Path()
         points.forEachIndexed { i,p -> if(i==0 || p.segment) path.moveTo(x(p),y(p)) else path.lineTo(x(p),y(p)) }
-        paint.style=Paint.Style.STROKE; paint.strokeWidth=3*resources.displayMetrics.density; paint.color=Color.rgb(255,79,180)
+        paint.style=Paint.Style.STROKE; paint.strokeWidth=3*resources.displayMetrics.density; paint.color=NavStyle.PINK
         canvas.drawPath(path,paint)
-        paint.style=Paint.Style.FILL; paint.color=Color.rgb(61,220,132); canvas.drawCircle(x(points.first()),y(points.first()),6*resources.displayMetrics.density,paint)
-        paint.color=Color.rgb(255,181,71); canvas.drawCircle(x(points.last()),y(points.last()),4*resources.displayMetrics.density,paint)
+        paint.style=Paint.Style.FILL; paint.color=NavStyle.GREEN; canvas.drawCircle(x(points.first()),y(points.first()),6*resources.displayMetrics.density,paint)
+        paint.color=NavStyle.AMBER; canvas.drawCircle(x(points.last()),y(points.last()),4*resources.displayMetrics.density,paint)
     }
 }

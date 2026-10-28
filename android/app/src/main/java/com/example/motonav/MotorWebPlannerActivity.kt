@@ -2,8 +2,10 @@ package com.example.motonav
 
 import android.Manifest
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.drawable.RippleDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -76,21 +78,23 @@ class MotorWebPlannerActivity : AppCompatActivity() {
             view.setPadding(bars.left, bars.top, bars.right, bars.bottom); ins
         }
         val toolbar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        toolbar.addView(button("返回") { finish() }, LinearLayout.LayoutParams(dp(62), dp(44)))
+        toolbar.addView(button("返回") { finish() }, LinearLayout.LayoutParams(dp(62), dp(48)))
         toolbar.addView(label("摩托车路线规划", 17f, S.TEXT).apply { isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
-        toolbar.addView(button("账号") { openBrowser() }, LinearLayout.LayoutParams(dp(68), dp(44)))
+        toolbar.addView(button("账号") { openBrowser() }, LinearLayout.LayoutParams(dp(68), dp(48)))
         root.addView(toolbar)
         fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
         startText = endpointRow(fields, "起点") { searchPlace(true) }
         endText = endpointRow(fields, "终点") { searchPlace(false) }
         val controls = LinearLayout(this)
-        controls.addView(button("交换起终点") { swap() }, LinearLayout.LayoutParams(0, dp(40), 1f))
+        controls.addView(button("交换起终点") { swap() }, LinearLayout.LayoutParams(0, dp(48), 1f))
         plan = button("规划摩托车路线") { calculate() }.apply { background = S.round(this@MotorWebPlannerActivity, S.PINK, 12f); setTextColor(Color.WHITE) }
-        controls.addView(plan, LinearLayout.LayoutParams(0, dp(40), 2f))
+        controls.addView(plan, LinearLayout.LayoutParams(0, dp(48), 2f).apply { leftMargin=dp(8) })
         fields.addView(controls)
         root.addView(fields)
         compact = label("", 13f, S.TEXT).apply {
+            minHeight=dp(48);gravity=Gravity.CENTER_VERTICAL
             setPadding(dp(14), dp(7), dp(14), dp(7)); visibility = View.GONE
+            background=S.round(this@MotorWebPlannerActivity,S.CARD2,12f)
             setOnClickListener { showFields() }
         }
         root.addView(compact)
@@ -106,10 +110,10 @@ class MotorWebPlannerActivity : AppCompatActivity() {
         alternatives = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(8), dp(6), dp(8), dp(4)) }
         root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(alternatives) })
         actions = LinearLayout(this).apply { setPadding(dp(8), 0, dp(8), dp(8)); visibility = View.GONE }
-        actions.addView(button("模拟导航") { begin(true) }, LinearLayout.LayoutParams(0, dp(44), 1f))
+        actions.addView(button("模拟导航") { begin(true) }, LinearLayout.LayoutParams(0, dp(48), 1f))
         actions.addView(button("开始导航") { begin(false) }.apply {
             background = S.round(this@MotorWebPlannerActivity, S.PINK, 12f); setTextColor(Color.WHITE)
-        }, LinearLayout.LayoutParams(0, dp(44), 2f))
+        }, LinearLayout.LayoutParams(0, dp(48), 2f).apply { leftMargin=dp(8) })
         root.addView(actions)
         setContentView(root)
         val saved = state?.getString("motor_request") ?: intent.getStringExtra(EXTRA_REQUEST_URL)
@@ -124,7 +128,7 @@ class MotorWebPlannerActivity : AppCompatActivity() {
         }
         refreshFields()
         setupLocation()
-        if (!Keys.hasAmap(this)) status.text = "请先在首页「地图 Key」配置高德 Android Key，以使用地点搜索和地图"
+        if (!Keys.hasAmap(this)) status.text = "请先在设置的「地图与天气 Key」里配置高德 Android Key，以使用地点搜索和地图"
     }
 
     private fun label(value: String, size: Float = 14f, color: Int = S.TEXT) = TextView(this).apply {
@@ -133,14 +137,16 @@ class MotorWebPlannerActivity : AppCompatActivity() {
     private fun button(value: String, click: () -> Unit) = label(value, 14f, S.CYAN).apply {
         gravity = Gravity.CENTER; isSingleLine = true
         TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(this, 10, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+        minHeight=dp(48)
         setPadding(dp(6), dp(4), dp(6), dp(4)); setOnClickListener { click() }
+        background=RippleDrawable(ColorStateList.valueOf(S.STROKE),S.round(this@MotorWebPlannerActivity,S.CARD2,12f),null)
     }
     private fun endpointRow(parent: LinearLayout, title: String, click: () -> Unit): TextView {
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        row.addView(label(title, 13f, S.SUB).apply { gravity = Gravity.CENTER_VERTICAL }, LinearLayout.LayoutParams(dp(42), dp(43)))
+        row.addView(label(title, 13f, S.SUB).apply { gravity = Gravity.CENTER_VERTICAL }, LinearLayout.LayoutParams(dp(42), dp(48)))
         val text = label("", 15f).apply { gravity = Gravity.CENTER_VERTICAL; maxLines = 1; setOnClickListener { click() } }
-        row.addView(text, LinearLayout.LayoutParams(0, dp(43), 1f))
-        row.addView(button("选择", click), LinearLayout.LayoutParams(dp(58), dp(43)))
+        row.addView(text, LinearLayout.LayoutParams(0, dp(48), 1f))
+        row.addView(button("选择", click), LinearLayout.LayoutParams(dp(58), dp(48)))
         parent.addView(row)
         return text
     }
@@ -297,8 +303,9 @@ class MotorWebPlannerActivity : AppCompatActivity() {
         routes.forEachIndexed { i, route ->
             val minutes = (route.seconds + 59) / 60
             val time = if(minutes >= 60) "${minutes/60}小时${minutes%60}分" else "${minutes}分钟"
-            alternatives.addView(label("${if(i == index) "● " else ""}方案 ${i+1}  $time\n${"%.1f".format(route.distance/1000.0)} 公里 · ${route.lights} 个红绿灯", 13f, if(i == index) S.CYAN else S.TEXT).apply {
-                setPadding(dp(12),dp(9),dp(12),dp(9)); background = S.round(this@MotorWebPlannerActivity, if(i == index) 0xff263043.toInt() else S.CARD_SOLID, 12f)
+            alternatives.addView(label("方案 ${i+1}  $time\n${"%.1f".format(route.distance/1000.0)} 公里 · ${route.lights} 个红绿灯", 13f, if(i == index) S.PINK else S.TEXT).apply {
+                setPadding(dp(12),dp(9),dp(12),dp(9)); background = S.round(this@MotorWebPlannerActivity, S.CARD_SOLID, 12f, if(i == index) S.PINK else S.STROKE, if(i == index) 2f else 1f)
+                isSelected = i == index
                 setOnClickListener { selectRoute(i) }
             },LinearLayout.LayoutParams(-2,-2).apply { rightMargin = dp(6) })
         }

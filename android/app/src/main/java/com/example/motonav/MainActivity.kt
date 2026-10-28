@@ -8,6 +8,7 @@ import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -27,7 +28,9 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import java.io.File
 
 /**
@@ -151,22 +154,22 @@ import java.io.File
  *         配套圆屏固件 v7.12.9-nav.1
  *   v8.3.39  圆屏方向圆盘默认锁定，打开调节开关后拖动并在松手时保存；微调按钮文字改为深色。
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
+ *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  */
-const val APP_VERSION = "v8.3.39"
+const val APP_VERSION = "v8.3.40"
 
 class MainActivity : AppCompatActivity() {
-    // ---------------- 配色（Neumorphism：同色表面 + 左上亮/右下暗） ----------------
-    private val BG = Color.parseColor("#E0E5EC")
-    private val CARD = Color.parseColor("#E0E5EC")
-    private val STROKE = Color.parseColor("#B8BCC2")
-    private val TEXT = Color.parseColor("#333333")
-    private val SUB = Color.parseColor("#6B7280")
-    private val PINK = Color.parseColor("#6D5DFC")
-    private val PURPLE = Color.parseColor("#6D5DFC")
-    private val CYAN = Color.parseColor("#4ECDC4")
-    private val GREEN = Color.parseColor("#4ECDC4")
-    private val AMBER = Color.parseColor("#FFE66D")
-    private val RED = Color.parseColor("#FF6B6B")
+    private val BG = NavStyle.BG
+    private val CARD = NavStyle.CARD
+    private val STROKE = NavStyle.STROKE
+    private val TEXT = NavStyle.TEXT
+    private val SUB = NavStyle.SUB
+    private val PINK = NavStyle.PINK
+    private val PURPLE = NavStyle.PURPLE
+    private val CYAN = NavStyle.CYAN
+    private val GREEN = NavStyle.GREEN
+    private val AMBER = NavStyle.AMBER
+    private val RED = NavStyle.RED
 
     private val handler = Handler(Looper.getMainLooper())
     private val refreshers = ArrayList<() -> Unit>()       // 每 0.2 秒刷新一次的界面元素
@@ -284,24 +287,18 @@ class MainActivity : AppCompatActivity() {
             1 -> {
                 content.addView(statusCard())
                 content.addView(setupCard())
-                content.addView(section("screen", "◉", "圆屏设置", { screenSummary() }) { screenSection(it) })
-                content.addView(section("firmware", "↑", "圆屏固件更新", { firmwareSummary() }) { firmwareUpdateSection(it) })
+                content.addView(section("screen", "圆屏设置", { screenSummary() }) { screenSection(it) })
+                content.addView(section("firmware", "圆屏固件更新", { firmwareSummary() }) { firmwareUpdateSection(it) })
             }
             2 -> {
-                content.addView(section("map", "⌖", "地图与显示", { mapSummary() }) { mapSection(it) })
-                content.addView(section("voice", "♫", "导航语音", { voiceSummary() }) { voiceSection(it) })
-                content.addView(section("keys", "🔑", "地图与天气 Key", { keySummary() }) { keySection(it) })
-                content.addView(section("about", "ⓘ", "关于 MotoNav", { "当前 $APP_VERSION · 检查 App 更新" }) { aboutSection(it) })
-                content.addView(label("普通使用不需要进入这里。开发者诊断、测试和手动 OTA 文件入口统一放在高级设置。", 12f, SUB).apply {
-                    setPadding(dp(4), 0, dp(4), dp(12))
-                })
-                devWrap = section("advanced", "⚙", "高级设置", { "诊断、测试和手动 OTA" }) { devSection(it) }.apply {
+                content.addView(section("map", "地图与显示", { mapSummary() }) { mapSection(it) })
+                content.addView(section("voice", "导航语音", { voiceSummary() }) { voiceSection(it) })
+                content.addView(section("keys", "地图与天气 Key", { keySummary() }) { keySection(it) })
+                content.addView(section("about", "关于 MotoNav", { "当前 $APP_VERSION · 检查 App 更新" }) { aboutSection(it) })
+                devWrap = section("advanced", "高级设置", { "诊断、测试和手动 OTA" }) { devSection(it) }.apply {
                     visibility = if (uiPrefs.getBoolean("dev_mode", false)) View.VISIBLE else View.GONE
                 }
                 content.addView(devWrap)
-                content.addView(label("连续点击页面顶部的版本号 5 次，可显示或隐藏高级设置。", 12f, SUB).apply {
-                    setPadding(dp(4), dp(2), dp(4), dp(8))
-                })
                 content.addView(exitButton())
             }
         }
@@ -313,13 +310,11 @@ class MainActivity : AppCompatActivity() {
     private fun pageHeader(title: String): View = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(4), dp(2), dp(4), dp(12))
-        addView(label(title, 25f, if (title == "MotoNav") PINK else TEXT, bold = true).apply {
-            if (title == "MotoNav") {
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD_ITALIC)
-            }
-        })
-        addView(label((if (packageName.endsWith(".fresh")) "新签名版" else "网页摩托实验") + " · $APP_VERSION", 11f, SUB).apply {
-            setPadding(0, dp(3), 0, 0); setOnClickListener { onVersionTap() }
+        addView(label(title, 26f, TEXT, bold = true))
+        addView(label(if (title == "MotoNav") "准备出发 · $APP_VERSION" else "MotoNav · $APP_VERSION", 12f, SUB).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            minHeight = dp(48)
+            setOnClickListener { onVersionTap() }
         })
     }
 
@@ -380,20 +375,14 @@ class MainActivity : AppCompatActivity() {
     /** 去哪儿：搜索框 + 搜索按钮，下面是搜索结果；没输入时显示“粘贴高德分享的路线”和“最近去过” */
     private fun searchCard(): View {
         val card = card()
-        card.addView(label("摩托车路线规划（实验）", 18f, CYAN, bold = true).apply {
-            minHeight = dp(52); gravity = Gravity.CENTER_VERTICAL
-            setOnClickListener { startActivity(Intent(this@MainActivity, MotorWebPlannerActivity::class.java)) }
-        })
-        card.addView(label("输入起点和目的地 → 对比摩托车路线 → 选择后导航", 12f, SUB).apply {
-            setPadding(0, 0, 0, dp(12))
-        })
+        card.addView(label("去哪里", 20f, TEXT, bold = true))
+        card.addView(label("搜索目的地，选择路线后开始导航", 13f, SUB), lpMatch(bottom = 14))
         directRouteMode = LocalRouting.normalize(getSharedPreferences("motonav", MODE_PRIVATE).getInt("direct_route_mode", LocalRouting.DRIVE))
+        card.addView(subhead("路线方式", top = 0))
         card.addView(segmented(listOf(LocalRouting.DRIVE to "驾车", LocalRouting.BICYCLE to "自行车"), { directRouteMode }) {
             directRouteMode = it
             getSharedPreferences("motonav", MODE_PRIVATE).edit().putInt("direct_route_mode", it).apply()
-        }, lpMatch(top = 4))
-        card.addView(label("选择交通方式后搜索目的地；摩托车请用上方摩托车路线规划", 12f, SUB).apply { setPadding(0, dp(6), 0, dp(10)) })
-        card.addView(label("去哪儿", 17f, TEXT, bold = true).apply { setPadding(0, 0, 0, dp(12)) })
+        }, lpMatch(bottom = 14))
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val input = EditText(this).apply {
             hint = "搜索地点、地址"
@@ -416,11 +405,11 @@ class MainActivity : AppCompatActivity() {
 
         // 没输入时：粘贴分享路线 + 最近去过
         val idle = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        idle.addView(label("📋  粘贴高德分享的路线", 16f, AMBER, bold = true).apply {
-            setPadding(0, dp(12), 0, dp(4))
-            setOnClickListener { pasteShareFromHome() }
+        idle.addView(divider(top = 14))
+        idle.addView(pillButton("规划摩托车路线", PINK) {
+            startActivity(Intent(this@MainActivity, MotorWebPlannerActivity::class.java))
         })
-        idle.addView(label("在高德里规划好路线 → 分享 → 选 MotoNav；或者复制链接后点上面这行", 12f, SUB).apply { setPadding(0, 0, 0, dp(6)) })
+        idle.addView(textLink("导入高德分享路线") { pasteShareFromHome() }, lpMatch(top = 4))
         val hist = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         idle.addView(hist)
         card.addView(idle)
@@ -428,21 +417,21 @@ class MainActivity : AppCompatActivity() {
         fun showHistory() {
             hist.removeAllViews()
             val favorites = FavoritePlaces.load(this)
-            hist.addView(label("★ 常用目的地", 14f, CYAN, bold = true).apply { setPadding(0, dp(12), 0, dp(2)) })
+            hist.addView(subhead("常用目的地", top = 12))
             if (favorites.isEmpty()) hist.addView(label("在路线规划页点「收藏到常用目的地」添加", 12f, SUB))
             favorites.take(4).forEach { p ->
                 hist.addView(placeRow(p.name, p.addr) { openPlan(p.name, p.addr, p.lat, p.lng) })
             }
-            hist.addView(label("管理常用目的地（${favorites.size}/50）", 13f, CYAN).apply {
-                minHeight = dp(44); gravity = Gravity.CENTER_VERTICAL
+            hist.addView(label("管理常用目的地（${favorites.size}/50）", 14f, PINK).apply {
+                minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL
                 setOnClickListener { FavoritePlacesUi.manage(this@MainActivity, { showHistory() }) { p -> openPlan(p.name,p.addr,p.lat,p.lng) } }
             })
             val h = NavHistory.load(this).take(5)
             if (h.isEmpty()) return
-            hist.addView(label("最近去过", 12f, SUB).apply { setPadding(0, dp(12), 0, dp(2)) })
+            hist.addView(subhead("最近去过", top = 12))
             for (it in h) hist.addView(placeRow(it.name, it.addr) { openPlan(it.name, it.addr, it.lat, it.lng) })
             hist.addView(label("清除记录", 13f, SUB).apply {
-                setPadding(0, dp(12), 0, dp(4))
+                minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL
                 setOnClickListener { NavHistory.clear(this@MainActivity); showHistory() }
             })
         }
@@ -604,12 +593,17 @@ class MainActivity : AppCompatActivity() {
                 if (err != null) Toast.makeText(this@MainActivity, "巡航没能开始：$err", Toast.LENGTH_LONG).show()
             }
         }
-        row.addView(cruise, LinearLayout.LayoutParams(dp(88), dp(44)))
+        row.addView(cruise, LinearLayout.LayoutParams(dp(88), dp(48)))
         card.addView(row)
         refreshers += {
             val on = AppStatus.navigation().cruising
             cruise.text = if (on) "结束" else "开始"
-            cruise.setTextColor(if (on) RED else CYAN)
+            if (cruise.isSelected != on) {
+                cruise.isSelected = on
+                cruise.setTextColor(if (on) RED else Color.WHITE)
+                cruise.background = RippleDrawable(ColorStateList.valueOf(STROKE),
+                    NavStyle.round(this, if (on) NavStyle.CARD2 else PINK, 12f), null)
+            }
         }
         return wrapMargin(card)
     }
@@ -653,8 +647,6 @@ class MainActivity : AppCompatActivity() {
         // 小地图出问题时才显示
         val mapWarn = label("", 12f, AMBER).apply { setPadding(dp(24), dp(8), 0, 0) }
         card.addView(mapWarn)
-        val offlineLabel=label("",12f,SUB).apply { setPadding(dp(24),dp(6),0,0); maxLines=2 }
-        card.addView(offlineLabel)
         refreshers += {
             val device = AppStatus.device()
             val navigation = AppStatus.navigation()
@@ -666,7 +658,7 @@ class MainActivity : AppCompatActivity() {
             bat.visibility = if (device.connected && pct >= 0) View.VISIBLE else View.GONE
             if (pct >= 0) {
                 val chg = device.batteryCharging
-                bat.text = (if (chg) "⚡ " else "") + "$pct%"
+                bat.text = if (chg) "$pct% · 充电" else "$pct%"
                 bat.setTextColor(if (chg) CYAN else if (pct > 50) GREEN else if (pct >= 15) AMBER else RED)
             }
             reconnect.visibility = if (device.connected) View.GONE else View.VISIBLE
@@ -676,10 +668,9 @@ class MainActivity : AppCompatActivity() {
             navTitle.text = navigation.title
             navSub.text = navigation.detail
 
-            offlineLabel.text=MapFeeder.offlineStatus()
-            offlineLabel.visibility=if (offlineLabel.text.isEmpty()) View.GONE else View.VISIBLE
             mapWarn.text = MapFeeder.loadingStatus()
-            mapWarn.visibility = View.VISIBLE
+            mapWarn.visibility = if (device.connected && MapFeeder.enabled &&
+                mapWarn.text != "圆屏地图已就绪" && mapWarn.text != "等待地图数据…") View.VISIBLE else View.GONE
         }
         return wrapMargin(card)
     }
@@ -700,17 +691,21 @@ class MainActivity : AppCompatActivity() {
     private val uiPrefs by lazy { getSharedPreferences("ui", MODE_PRIVATE) }
 
     /** 一张可折叠卡片：标题 + 一行摘要（当前设置），点标题展开 / 收起；展开状态记在手机上 */
-    private fun section(key: String, icon: String, title: String, summary: () -> String,
+    private fun section(key: String, title: String, summary: () -> String,
                         forceOpen: Boolean = false, build: (LinearLayout) -> Unit): View {
         val card = card(softwareLayer = false)
-        val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(2), 0, dp(2)) }
-        head.addView(label(icon, 18f, TEXT), LinearLayout.LayoutParams(dp(32), ViewGroup.LayoutParams.WRAP_CONTENT))
+        val head = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(56)
+            isFocusable = true
+        }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(label(title, 16f, TEXT, bold = true))
-        val sum = label("", 12f, SUB).apply { isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END }
+        val sum = label("", 12f, SUB).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
         col.addView(sum)
         head.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        val chev = label("", 15f, SUB).apply { setPadding(dp(8), 0, 0, 0) }
+        val chev = label("", 13f, PINK).apply { setPadding(dp(12), 0, 0, 0) }
         head.addView(chev)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         body.addView(divider(top = 12))
@@ -718,7 +713,11 @@ class MainActivity : AppCompatActivity() {
         card.addView(head)
         card.addView(body)
         var open = forceOpen || uiPrefs.getBoolean("open_$key", false)
-        fun paint() { body.visibility = if (open) View.VISIBLE else View.GONE; chev.text = if (open) "收起 ▴" else "▾" }
+        fun paint() {
+            body.visibility = if (open) View.VISIBLE else View.GONE
+            chev.text = if (open) "收起" else "展开"
+            head.contentDescription = "$title，${if (open) "已展开" else "已收起"}"
+        }
         head.setOnClickListener { open = !open; uiPrefs.edit().putBoolean("open_$key", open).apply(); paint() }
         paint()
         refreshers += { sum.text = summary() }
@@ -726,8 +725,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /** 分组里的小标题 */
-    private fun subhead(t: String, top: Int = 12) = label(t, 14f, TEXT).apply { setPadding(0, dp(top), 0, dp(8)) }
-    private fun note(t: String) = label(t, 12f, SUB).apply { setPadding(0, dp(6), 0, 0) }
+    private fun subhead(t: String, top: Int = 12) = label(t, 15f, TEXT, bold = true).apply { setPadding(0, dp(top), 0, dp(8)) }
+    private fun note(t: String) = label(t, 13f, SUB).apply { setPadding(0, dp(6), 0, 0) }
 
     /** 圆屏显示：小地图开关、风格、夜间配色、清爽模式、行程环、弯道上色、走过的路线、预判 */
     private fun mapSection(card: LinearLayout) {
@@ -810,7 +809,7 @@ class MainActivity : AppCompatActivity() {
             { NaviVoice.duck }) { NaviVoice.setDuck(it) })
         val duckSub = label("", 12f, SUB).apply { setPadding(0, dp(6), 0, 0) }
         card.addView(duckSub)
-        card.addView(pillButton("放着音乐点我试试", STROKE) { NaviVoice.test() }, lpMatch(top = 8, bottom = 4).apply { height = dp(40) })
+        card.addView(pillButton("试听播报", STROKE) { NaviVoice.test() }, lpMatch(top = 8, bottom = 4).apply { height = dp(48) })
         // v6.6 有的音乐 App 压不住：提示改用“暂停”，暂停模式没开通知使用权时点这里去开
         val duckTip = label("", 12f, AMBER).apply {
             setPadding(0, dp(6), 0, 0)
@@ -824,7 +823,7 @@ class MainActivity : AppCompatActivity() {
             duckTip.text = when {
                 NaviVoice.duck == NaviVoice.DUCK_LOWER -> "压不住？有的音乐 App（小米手机上常见）不配合“压低”，改选「暂停」更靠谱"
                 NaviVoice.duck == NaviVoice.DUCK_PAUSE && !NaviVoice.canControlMedia() ->
-                    "👉 点这里打开 MotoNav 的「通知使用权」：不听话的音乐 App 也能被直接暂停、播完自动接着放"
+                    "点击这里开启 MotoNav 的通知使用权，播报时可暂停音乐，播完继续播放"
                 else -> ""
             }
             duckTip.visibility = if (duckTip.text.isEmpty()) View.GONE else View.VISIBLE
@@ -836,7 +835,7 @@ class MainActivity : AppCompatActivity() {
         card.addView(pillButton("开启通知使用权", STROKE) {
             try { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
             catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知使用权") }
-        }, lpMatch(top = 8, bottom = 4).apply { height = dp(40) })
+        }, lpMatch(top = 8, bottom = 4).apply { height = dp(48) })
         refreshers += { musicHint.text = if (AmapProbe.notifEnabled(this))
             "圆屏左滑查看天气，右滑查看歌曲；音乐页左滑返回，点按上一首、播放/暂停、下一首。上下滑也能查看天气。"
             else "先开启通知使用权，才能显示歌名和控制手机播放器。需要圆屏固件 v7.8.1。" }
@@ -888,11 +887,11 @@ class MainActivity : AppCompatActivity() {
         sys.addView(slider("音调", { NaviVoice.pitch }) { NaviVoice.setPitch(it) })
         // 试听 + 系统语音设置
         val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, dp(4)) }
-        btns.addView(pillButton("试听", PURPLE) { NaviVoice.test() }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(8) })
+        btns.addView(pillButton("试听", PURPLE) { NaviVoice.test() }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
         btns.addView(pillButton("系统语音设置", STROKE) {
             try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
             catch (_: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
-        }, LinearLayout.LayoutParams(0, dp(40), 1f))
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
         sys.addView(btns)
         // v4.1 推荐的免费语音（都是独立的语音引擎 App，装好后在上面「更换」里选；MotoNav 本身不变大）
         sys.addView(divider(top = 12))
@@ -933,7 +932,7 @@ class MainActivity : AppCompatActivity() {
         }
         // 标题
         root.addView(label("小地图风格", 22f, TEXT, bold = true))
-        root.addView(label("四种独立风格。下图为示意，原版保留高德默认颜色和标注；圆屏需更新配套固件。", 12f, SUB).apply {
+        root.addView(label("选择适合骑行环境的圆屏地图风格。预览图仅供参考。", 13f, SUB).apply {
             setPadding(0, dp(4), 0, dp(12))
         })
         // 卡片网格（两列）
@@ -941,8 +940,10 @@ class MainActivity : AppCompatActivity() {
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val cards = HashMap<Int, LinearLayout>()
         fun styleCard(c: LinearLayout, selected: Boolean) {
-            c.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-            c.background = if (selected) Neumorphic.recessed(this, 18f) else Neumorphic.raised(this, 18f)
+            c.isSelected = selected
+            c.background = NavStyle.round(this, CARD, 14f, if (selected) PINK else STROKE,
+                if (selected) 2f else 1f)
+            c.contentDescription = if (selected) "${c.tag}，已选" else "${c.tag}，点击选择"
         }
         val order = MapFeeder.THEME_ORDER
         var row: LinearLayout? = null
@@ -967,8 +968,9 @@ class MainActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(2))
             }
             c.addView(name, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            val desc = label(MapFeeder.themeDesc(t), 11f, SUB).apply { gravity = Gravity.CENTER; maxLines = 3 }
+            val desc = label(MapFeeder.themeDesc(t), 12f, SUB).apply { gravity = Gravity.CENTER; maxLines = 3 }
             c.addView(desc, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            c.tag = MapFeeder.themeName(t)
             styleCard(c, t == MapFeeder.theme)
             c.setOnClickListener {
                 val old = MapFeeder.theme
@@ -992,11 +994,19 @@ class MainActivity : AppCompatActivity() {
         root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         // 底部：完成
         root.addView(pillButton("完成", PINK) { dlg.dismiss() },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)).apply { topMargin = dp(10) })
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(10) })
         dlg.setContentView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         dlg.show()
         dlg.window?.setBackgroundDrawableResource(android.R.color.transparent)
         dlg.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        dlg.window?.let { window ->
+            window.statusBarColor = BG
+            window.navigationBarColor = BG
+            WindowCompat.getInsetsController(window, window.decorView).apply {
+                isAppearanceLightStatusBars = true
+                isAppearanceLightNavigationBars = true
+            }
+        }
     }
 
     // ---- v4.1 推荐的免费语音引擎 ----
@@ -1018,7 +1028,7 @@ class MainActivity : AppCompatActivity() {
         }
         refreshers += {
             val has = NaviVoice.hasEngine(e.pkgKey)
-            st.text = (if (has) "✓ 已安装　" else "") + e.desc
+            st.text = (if (has) "已安装 · " else "") + e.desc
             btn.text = if (has) "打开商店" else "安装"
         }
         return settingRow(e.name, null, btn, st)
@@ -1055,7 +1065,7 @@ class MainActivity : AppCompatActivity() {
             }, callSub))
         refreshers += {
             val missing = CallWatcher.enabled && CallWatcher.PERMS.any { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-            callSub.text = if (missing) "⚠ ${CallWatcher.permsText(this)}（点这里授权）"
+            callSub.text = if (missing) "${CallWatcher.permsText(this)}（点这里授权）"
                 else "来电时圆屏显示名字和号码，按住圆屏 0.2 秒接听"   // v7.7
             callSub.setTextColor(if (missing) AMBER else SUB)
         }
@@ -1117,11 +1127,11 @@ class MainActivity : AppCompatActivity() {
             val d = ((dial.angle + delta) % 360 + 360) % 360
             dial.setAngle(d); MapFeeder.setScreenDeg(d, save = true)
         }
-        btnRow.addView(stepBtn("−1°") { nudge(-1) }, LinearLayout.LayoutParams(dp(84), dp(44)).apply { rightMargin = dp(10) })
-        btnRow.addView(stepBtn("+1°") { nudge(1) }, LinearLayout.LayoutParams(dp(84), dp(44)).apply { rightMargin = dp(10) })
-        btnRow.addView(stepBtn("归零") { dial.setAngle(0); MapFeeder.setScreenDeg(0, save = true) }, LinearLayout.LayoutParams(dp(84), dp(44)))
+        btnRow.addView(stepBtn("−1°") { nudge(-1) }, LinearLayout.LayoutParams(dp(84), dp(48)).apply { rightMargin = dp(10) })
+        btnRow.addView(stepBtn("+1°") { nudge(1) }, LinearLayout.LayoutParams(dp(84), dp(48)).apply { rightMargin = dp(10) })
+        btnRow.addView(stepBtn("归零") { dial.setAngle(0); MapFeeder.setScreenDeg(0, save = true) }, LinearLayout.LayoutParams(dp(84), dp(48)))
         card.addView(btnRow)
-        card.addView(note("开启调节后按住圆盘转动，松手自动保存；粉色指针表示画面上方，接近 0°/90°/180°/270° 时会吸附。下方按钮始终可用。"))
+        card.addView(note("开启调节后转动圆盘，松手自动保存。指针表示画面上方；微调按钮始终可用。"))
         card.addView(divider(top = 14))
         // v6.4 配对验证（固件 v6.5）
         card.addView(settingRow("配对的手机",
@@ -1144,8 +1154,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Ordinary firmware update flow. Diagnostics and local file picking stay in advanced settings. */
     private fun firmwareUpdateSection(card: LinearLayout) {
-        card.addView(subhead("圆屏固件更新"))
-        card.addView(note("检查、下载和验证均在 App 内完成，不需要电脑或文件管理器。请停车后保持手机靠近圆屏，并接入稳定电源。"))
+        card.addView(note("停车后检查并安装稳定版。更新时保持手机靠近圆屏，并接入稳定电源。"))
         val check = pillButton("检查稳定版更新", PURPLE) { checkGithubOta() }
         val update = pillButton("立即更新圆屏", PINK) { confirmGithubOta() }.apply { visibility = View.GONE }
         val status = label(AppStatus.ota().message, 12f, SUB).apply { setPadding(0, dp(8), 0, 0); setLineSpacing(0f, 1.15f) }
@@ -1393,11 +1402,10 @@ class MainActivity : AppCompatActivity() {
 
     /** v6.2 Key 设置：显示两个 key 填没填，点「填写 / 修改」弹出填写页 */
     private fun keySection(card: LinearLayout) {
-        val amapSub = label("", 12f, SUB)
-        card.addView(settingRow("高德 key", null, textLink("填写 / 修改") { showKeyDialog(first = false) }, amapSub))
+        val amapSub = label("", 13f, SUB)
+        card.addView(settingRow("高德地图 Key", null, textLink("填写 / 修改") { showKeyDialog(first = false) }, amapSub))
         card.addView(divider())
-        card.addView(divider())
-        val weatherSub = label("和风天气：实况、逐小时、降水、空气、预警", 12f, SUB)
+        val weatherSub = label("", 13f, SUB)
         card.addView(settingRow("和风天气", null, textLink("配置") { showWeatherConfig() }, weatherSub))
         card.addView(textLink("查看天气详情与数据来源") {
             android.app.AlertDialog.Builder(this).setTitle("和风天气")
@@ -1406,8 +1414,8 @@ class MainActivity : AppCompatActivity() {
         refreshers += { weatherSub.text = if (Weather.host().isBlank() || Weather.key().isBlank()) "未配置：请填写 API Host 与 API Key" else "已配置 · 仅查看天气时请求，10分钟缓存" }
         refreshers += {
             val a = Keys.amap(this)
-            amapSub.text = Keys.mask(a) + (if (a.isEmpty()) "：导航、搜索、定位都用不了" else if (a != Keys.appliedAmap) "（重启 App 后生效）" else "") +
-                "\n导航、搜索、定位、普通底图和卫星图用它"
+            amapSub.text = if (a.isEmpty()) "未配置 · 导航与搜索不可用"
+                else Keys.mask(a) + if (a != Keys.appliedAmap) " · 重启后生效" else " · 已生效"
             amapSub.setTextColor(if (a.isEmpty()) RED else SUB)
         }
     }
@@ -1563,7 +1571,7 @@ class MainActivity : AppCompatActivity() {
         card.addView(settingRow("俯视楼块（实验）", "高德建筑轮廓；需要楼块实验固件，取图未完成时继续显示普通底图",
             toggle({MapFeeder.buildingEnabled}){MapFeeder.setBuildingEnabled(it)}))
         card.addView(pillButton("显示 / 隐藏高德取图预览", STROKE) { AmapCaptureHost.togglePreview() },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(40)))
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(48)))
         card.addView(subhead("屏幕数据线速度", top = 14))
         card.addView(segmented(listOf(40 to "40 标准", 60 to "60", 80 to "80"), { BleLink.screenMhz }) { BleLink.send("#q,$it") })
         card.addView(note("越快画面撕裂越轻；花屏就切回 40。切换后圆屏会自动重启"))
@@ -1571,14 +1579,14 @@ class MainActivity : AppCompatActivity() {
             toggle({ BleLink.screenFast != 0 }) { BleLink.send(if (it) "#f,1" else "#f,0") }))
         card.addView(divider(top = 8))
         val testRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(12), 0, dp(10)) }
-        testRow.addView(pillButton("测试：左转 160 米", STROKE) { BleLink.send("L,160") }, LinearLayout.LayoutParams(0, dp(40), 1f).apply { rightMargin = dp(8) })
-        testRow.addView(pillButton("圆屏清屏", STROKE) { BleLink.send("C") }, LinearLayout.LayoutParams(0, dp(40), 1f))
+        testRow.addView(pillButton("测试：左转 160 米", STROKE) { BleLink.send("L,160") }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
+        testRow.addView(pillButton("圆屏清屏", STROKE) { BleLink.send("C") }, LinearLayout.LayoutParams(0, dp(48), 1f))
         card.addView(testRow)
         // v3.5 高德探测 / v3.0 高德原版导航界面
         card.addView(pillButton("高德探测", STROKE) { startActivity(Intent(this@MainActivity, ProbeActivity::class.java)) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { bottomMargin = dp(10) })
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { bottomMargin = dp(10) })
         card.addView(pillButton("用高德原版界面导航", STROKE) { NaviBridge.startNaviComponent(this@MainActivity) },
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)).apply { bottomMargin = dp(10) })
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { bottomMargin = dp(10) })
         card.addView(subhead("圆屏 OTA 升级", top = 14))
         card.addView(note("仅选择 1.75C 构建产物中的 manifest 和 *_app_0x10000.bin；完整 *_full_0x0.bin 只用于 USB 救援。升级前请停车、接入稳定电源，并保持手机与圆屏靠近。"))
         card.addView(pillButton("选择 OTA manifest", STROKE) {
@@ -1586,7 +1594,7 @@ class MainActivity : AppCompatActivity() {
                 type = "application/json"
                 addCategory(Intent.CATEGORY_OPENABLE)
             }, PICK_OTA_MANIFEST)
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(40)))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         otaStatusView = label("尚未选择 OTA 文件", 12f, SUB).apply { setPadding(0, dp(8), 0, 0) }
         card.addView(otaStatusView)
         val info = label("", 12f, SUB).apply { setLineSpacing(0f, 1.15f); setTextIsSelectable(true) }
@@ -1602,7 +1610,7 @@ class MainActivity : AppCompatActivity() {
         refreshers += {
             if (info.isShown) {
                 val crash = CrashLog.last()
-                info.text = (if (crash.isNotEmpty()) "⚠ 上次闪退（截图发出来；长按这里清除）：\n$crash\n\n" else "") +
+                info.text = (if (crash.isNotEmpty()) "上次闪退（长按清除）：\n$crash\n\n" else "") +
                     "Key：${Keys.applyInfo}\n" +
                     "圆屏：${BleLink.statsText()}\n${BleLink.screenStats}\n" +
                     "设备：${BleLink.screenInfo}\n自检：${BleLink.screenSelfTest}\nBLE：${BleLink.screenBleStats}\n" +
@@ -1625,19 +1633,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** v6.2 填 key 的页面：两个输入框 + 申请高德 key 要用的包名、SHA1（点一下复制） */
+    /** First-run key entry and copyable signing details. */
     private fun showKeyDialog(first: Boolean) {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(8), dp(20), dp(4))
+            setPadding(dp(20), dp(8), dp(20), dp(8))
         }
-        fun copyRow(name: String, value: String) = label("$name：$value  ⧉", 12f, CYAN).apply {
-            setPadding(0, dp(4), 0, dp(4))
-            setOnClickListener {
+        fun copyRow(name: String, value: String): View {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                minimumHeight = dp(64)
+            }
+            val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(label(name, 13f, TEXT, bold = true))
+            col.addView(label(value, 12f, SUB).apply { typeface = Typeface.MONOSPACE })
+            row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(textLink("复制") {
                 val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 cm.setPrimaryClip(android.content.ClipData.newPlainText(name, value))
                 toast("已复制$name")
-            }
+            }.apply { contentDescription = "复制$name" }, LinearLayout.LayoutParams(dp(56), dp(48)).apply { leftMargin = dp(8) })
+            return row
         }
         fun input(hint: String, value: String) = EditText(this).apply {
             setText(value)
@@ -1647,31 +1664,27 @@ class MainActivity : AppCompatActivity() {
             setTextColor(TEXT)
             setHintTextColor(SUB)
             typeface = Typeface.MONOSPACE
-            setPadding(dp(14), dp(4), dp(14), dp(4))
+            minimumHeight = dp(48)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
             Neumorphic.applyRecessed(this, 12f)
         }
         if (first) {
-            val missing = listOfNotNull(if (!Keys.hasAmap(this)) "高德 key" else null)
-            box.addView(label("App 里不带任何 key，要填你自己申请的（都是免费的）。还没填：${missing.joinToString("、")}。" +
-                "填好以后可以在底部「地图 Key」页面里改。", 13f, TEXT).apply { setPadding(0, 0, 0, dp(10)) })
+            box.addView(label("要使用地图和导航，请填入高德开放平台的 Android Key。", 13f, SUB), lpMatch(bottom = 14))
         }
 
-        box.addView(label("高德 key（必填）", 15f, TEXT, bold = true))
-        box.addView(label("高德开放平台 lbs.amap.com → 控制台 → 应用管理 → 创建应用 → 添加 Key，" +
-            "服务平台选「Android 平台」，把下面两项填进去：", 12f, SUB).apply { setPadding(0, dp(4), 0, dp(2)) })
+        box.addView(label("高德 Android Key", 15f, TEXT, bold = true))
+        val amapIn = input("粘贴 Key", Keys.userAmap(this))
+        box.addView(amapIn, lpMatch(top = 8, bottom = 18))
+        box.addView(label("申请 Key 时填写", 15f, TEXT, bold = true))
+        box.addView(label("高德开放平台 → 应用管理 → 添加 Key，服务平台选 Android。", 12f, SUB), lpMatch(top = 4))
         box.addView(copyRow("包名（PackageName）", packageName))
-        // v6.8 按这个安装包是调试版还是正式版，告诉用户填到高德的哪一格
         val debugBuild = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
         box.addView(copyRow(if (debugBuild) "调试版安全码 SHA1" else "发布版安全码 SHA1", Keys.signSha1(this)))
-        box.addView(label(if (debugBuild) "你现在装的是调试版（Android Studio 点 Run 装的）：填到高德 key 的「调试版安全码 SHA1」"
-            else "你现在装的是正式版（用 .jks 打包的 APK）：填到高德 key 的「发布版安全码 SHA1」", 11f, SUB))
-        val amapIn = input("粘贴高德 key", Keys.userAmap(this))
-        box.addView(amapIn, lpMatch(top = 6, bottom = 14))
 
         android.app.AlertDialog.Builder(this)
-            .setTitle(if (first) "填写地图 key" else "Key 设置")
+            .setTitle(if (first) "配置地图 Key" else "地图 Key")
             .setView(ScrollView(this).apply { addView(box) })
-            .setNegativeButton(if (first) "稍后再填" else "取消", null)
+            .setNegativeButton(if (first) "稍后" else "取消", null)
             .setPositiveButton("保存") { _, _ ->
                 val a = amapIn.text.toString().filterNot { it.isWhitespace() }
                 val needRestart = Keys.save(this, a)
@@ -1742,7 +1755,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun divider(top: Int = 10): View = View(this).apply {
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(top); bottomMargin = dp(2) }
+        setBackgroundColor(STROKE)
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1)).apply {
+            topMargin = dp(top); bottomMargin = dp(10)
+        }
     }
 
     private fun lpMatch(top: Int = 0, bottom: Int = 0) =
@@ -1751,27 +1767,31 @@ class MainActivity : AppCompatActivity() {
         }
 
     private fun pillButton(t: String, color: Int, onClick: () -> Unit) = TextView(this).apply {
+        val primary = color != STROKE && color != TEXT
         text = t
         textSize = 15f
-        setTextColor(color)
+        setTextColor(if (primary) Color.WHITE else TEXT)
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
         includeFontPadding = false
-        setPadding(dp(12), 0, dp(12), 0)               // v3.6 上下不留内边距，按钮高度由外面定，字不会被切掉
-        minHeight = dp(40)
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+        minHeight = dp(48)
         setOnClickListener { onClick() }
-        Neumorphic.applyRaised(this, 14f, interactive = true)
+        background = RippleDrawable(ColorStateList.valueOf(if (primary) NavStyle.CARD2 else STROKE),
+            NavStyle.round(this@MainActivity, if (primary) PINK else NavStyle.CARD2, 12f,
+                if (primary) 0 else STROKE), null)
     }
 
     private fun textLink(t: String, onClick: () -> Unit) = TextView(this).apply {
         text = t
-        textSize = 13f
-        setTextColor(PURPLE)
+        textSize = 14f
+        setTextColor(PINK)
         gravity = Gravity.CENTER
-        minHeight = dp(38)
-        setPadding(dp(10), dp(4), dp(10), dp(4))
+        minHeight = dp(48)
+        setPadding(dp(10), dp(8), dp(10), dp(8))
         setOnClickListener { onClick() }
-        Neumorphic.applyRaised(this, 12f, interactive = true)
+        background = RippleDrawable(ColorStateList.valueOf(NavStyle.CARD2),
+            NavStyle.round(this@MainActivity, CARD, 10f), null)
     }
 
     private fun setDot(v: View, color: Int) {
@@ -1803,61 +1823,63 @@ class MainActivity : AppCompatActivity() {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(6), 0, dp(6))
+            minimumHeight = dp(56)
+            setPadding(0, dp(8), 0, dp(8))
         }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(label(title, 15f, TEXT))
-        if (desc != null) col.addView(label(desc, 12f, SUB))
+        if (desc != null) col.addView(label(desc, 13f, SUB))
         if (descView != null) col.addView(descView)
         row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        if (control is SwitchCompat) control.contentDescription = title
         row.addView(control)
         return row
     }
 
-    /** 开关（自己画的胶囊开关，配色统一） */
+    /** Native switch keeps checked state, touch size and accessibility behavior consistent. */
     private fun toggle(get: () -> Boolean, onChange: (Boolean) -> Unit): View {
-        val track = FrameLayout(this)
-        val knob = View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(BG) } }
-        track.addView(knob, FrameLayout.LayoutParams(dp(22), dp(22)).apply { topMargin = dp(3) })
-        Neumorphic.applyRecessed(track, 14f)
-        knob.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-        track.layoutParams = LinearLayout.LayoutParams(dp(50), dp(28)).apply { leftMargin = dp(12) }
-        fun paint() {
-            val on = get()
-            knob.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (on) PINK else BG) }
-            (knob.layoutParams as FrameLayout.LayoutParams).leftMargin = if (on) dp(25) else dp(3)
-            knob.requestLayout()
+        val control = SwitchCompat(this).apply {
+            text = ""
+            minimumHeight = dp(48)
+            minWidth = dp(48)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply {
+                leftMargin = dp(12)
+            }
+            isChecked = get()
+            setOnCheckedChangeListener { _, value -> if (value != get()) onChange(value) }
         }
-        track.setOnClickListener { onChange(!get()); paint() }
-        paint()
-        refreshers += { paint() }
-        return track
+        refreshers += { if (control.isChecked != get()) control.isChecked = get() }
+        return control
     }
 
-    /** 分段选择按钮（选中的填充霓虹色） */
+    /** Compact choice group with an explicit selected state. */
     private fun segmented(options: List<Pair<Int, String>>, get: () -> Int, onPick: (Int) -> Unit): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(dp(3), dp(3), dp(3), dp(3))
-            Neumorphic.applyRecessed(this, 14f)
+            background = NavStyle.round(this@MainActivity, NavStyle.CARD2, 12f)
         }
         val items = ArrayList<Pair<Int, TextView>>()
         fun paint() {
             val cur = get()
             for ((v, tv) in items) {
                 val sel = v == cur
-                tv.setTextColor(if (sel) PINK else SUB)
+                if (tv.isSelected == sel && tv.background != null) continue
+                tv.isSelected = sel
+                tv.setTextColor(if (sel) PINK else TEXT)
                 tv.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                tv.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-                tv.background = if (sel) Neumorphic.recessed(this@MainActivity, 11f) else Neumorphic.raised(this@MainActivity, 11f)
+                tv.background = RippleDrawable(ColorStateList.valueOf(STROKE),
+                    NavStyle.round(this, if (sel) CARD else NavStyle.CARD2, 9f,
+                        if (sel) PINK else 0), null)
             }
         }
         for ((v, name) in options) {
             val tv = TextView(this).apply {
                 text = name
-                textSize = 14f
+                textSize = 13f
                 gravity = Gravity.CENTER
-                setPadding(dp(4), dp(9), dp(4), dp(9))
+                minHeight = dp(48)
+                setPadding(dp(4), dp(8), dp(4), dp(8))
                 setOnClickListener { onPick(v); paint() }
             }
             items += v to tv

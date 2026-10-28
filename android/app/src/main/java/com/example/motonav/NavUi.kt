@@ -25,19 +25,19 @@ import kotlin.math.sin
  * - LaneView：车道指示
  */
 object NavStyle {
-    val BG = Color.parseColor("#E0E5EC")
-    val CARD = Color.parseColor("#E0E5EC")
-    val CARD_SOLID = Color.parseColor("#E0E5EC")
-    val CARD2 = Color.parseColor("#D1D9E6")
-    val STROKE = Color.parseColor("#B8BCC2")
-    val TEXT = Color.parseColor("#333333")
-    val SUB = Color.parseColor("#6B7280")
-    val PINK = Color.parseColor("#6D5DFC")
-    val PURPLE = Color.parseColor("#6D5DFC")
-    val CYAN = Color.parseColor("#4ECDC4")
-    val AMBER = Color.parseColor("#FFE66D")
-    val RED = Color.parseColor("#FF6B6B")
-    val GREEN = Color.parseColor("#4ECDC4")
+    val BG = Color.parseColor("#F3F6F8")
+    val CARD = Color.WHITE
+    val CARD_SOLID = Color.WHITE
+    val CARD2 = Color.parseColor("#E8F0F3")
+    val STROKE = Color.parseColor("#D5E0E5")
+    val TEXT = Color.parseColor("#172B36")
+    val SUB = Color.parseColor("#536672")
+    val PINK = Color.parseColor("#155E75")
+    val PURPLE = PINK
+    val CYAN = PINK
+    val AMBER = Color.parseColor("#946200")
+    val RED = Color.parseColor("#B42332")
+    val GREEN = Color.parseColor("#1E7658")
 
     val NUM: Typeface = Typeface.create("sans-serif-condensed", Typeface.BOLD)
     val BOLD: Typeface = Typeface.create("sans-serif", Typeface.BOLD)
@@ -54,9 +54,9 @@ object NavStyle {
             if (strokeColor != 0) setStroke(max(1, dp(ctx, strokeDp).toInt()), strokeColor)
         }
 
-    /** Kept as a compatibility helper for navigation screens; Soft UI uses a solid surface. */
+    /** A quiet inset surface for the turn indicator. */
     fun gradient(ctx: Context, radiusDp: Float) = GradientDrawable().apply {
-        setColor(BG)
+        setColor(CARD2)
         cornerRadius = dp(ctx, radiusDp)
     }
 
@@ -103,7 +103,7 @@ class TurnArrowView(ctx: Context) : View(ctx) {
         set(v) { if (field != v) { field = v; invalidate() } }
     var angle: Int? = null
         set(v) { if (field != v) { field = v; invalidate() } }
-    var color = Color.WHITE
+    var color = NavStyle.PINK
         set(v) { if (field != v) { field = v; invalidate() } }
 
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -224,9 +224,9 @@ class LaneView(ctx: Context) : View(ctx) {
             val rec = fr in 0..14
             val x = i * (cw + gap)
             r.set(x, 0f, x + cw, h)
-            box.color = if (rec) Color.parseColor("#33FFFFFF") else Color.parseColor("#14FFFFFF")
+            box.color = if (rec) NavStyle.CARD2 else NavStyle.CARD
             c.drawRoundRect(r, h * 0.18f, h * 0.18f, box)
-            val col = if (rec) Color.WHITE else Color.parseColor("#66FFFFFF")
+            val col = if (rec) NavStyle.PINK else NavStyle.SUB
             glyph(c, x + cw / 2, h, cw, flags(if (bg in 0..14) bg else 0), col)
         }
     }
@@ -265,7 +265,7 @@ class LaneView(ctx: Context) : View(ctx) {
 /** 小工具：圆角渐变描边（选中的路线卡片用） */
 object GlowBorder {
     fun make(ctx: Context, radiusDp: Float): GradientDrawable = GradientDrawable().apply {
-        setColor(NavStyle.CARD2)
+        setColor(NavStyle.CARD_SOLID)
         cornerRadius = NavStyle.dp(ctx, radiusDp)
         setStroke(NavStyle.dpi(ctx, 2), NavStyle.PINK)
     }

@@ -383,7 +383,8 @@ class RoutePlanActivity : AppCompatActivity() {
         }
         val back = TextView(this).apply {
             text = "‹"; textSize = 30f; setTextColor(S.TEXT); gravity = Gravity.CENTER
-            setPadding(dp(14), 0, dp(6), dp(4))
+            contentDescription = "返回"
+            minWidth = dp(48)
             setOnClickListener { goBack() }
         }
         input = EditText(this).apply {
@@ -394,13 +395,14 @@ class RoutePlanActivity : AppCompatActivity() {
         }
         clearBtn = TextView(this).apply {
             text = "✕"; textSize = 16f; setTextColor(S.SUB); gravity = Gravity.CENTER
-            setPadding(dp(10), 0, dp(8), 0); visibility = View.GONE
+            contentDescription = "清除搜索内容"
+            minWidth = dp(48); visibility = View.GONE
             setOnClickListener { input.setText(""); toSearchMode() }
         }
         // v6.8 打完字点“搜索”（或按回车）才搜，不再每打一个字就搜
         val goBtn = TextView(this).apply {
             text = "搜索"; textSize = 15f; setTextColor(S.PINK); typeface = S.MEDIUM; gravity = Gravity.CENTER
-            setPadding(dp(8), 0, dp(16), 0)
+            minWidth = dp(48); setPadding(dp(6), 0, dp(12), 0)
             setOnClickListener { searchOrPick(forceSearch = true) }
         }
         searchBar.addView(back, LinearLayout.LayoutParams(-2, -1))
@@ -629,11 +631,11 @@ class RoutePlanActivity : AppCompatActivity() {
             styleChips(); calculate()
         }
         emuChip = chip("模拟") { emulate = !emulate; styleChips() }
-        top.addView(hwChip, LinearLayout.LayoutParams(-2, dp(32)).apply { leftMargin = dp(8) })
-        top.addView(emuChip, LinearLayout.LayoutParams(-2, dp(32)).apply { leftMargin = dp(6) })
+        top.addView(hwChip, LinearLayout.LayoutParams(-2, dp(48)).apply { leftMargin = dp(8) })
+        top.addView(emuChip, LinearLayout.LayoutParams(-2, dp(48)).apply { leftMargin = dp(6) })
         sheet.addView(top)
         favoriteButton = TextView(this).apply {
-            textSize = 13f; setTextColor(S.CYAN); gravity = Gravity.CENTER_VERTICAL; minHeight = dp(40)
+            textSize = 13f; setTextColor(S.CYAN); gravity = Gravity.CENTER_VERTICAL; minHeight = dp(48)
             setOnClickListener {
                 if (RideTrackMath.valid(destLat,destLng)) FavoritePlacesUi.save(this@RoutePlanActivity,destName,destAddr,destLat,destLng) { updateFavoriteButton() }
             }
@@ -650,7 +652,7 @@ class RoutePlanActivity : AppCompatActivity() {
                 refreshMode(); refreshVias(); calculate()
             }
         }
-        sheet.addView(modeChip,LinearLayout.LayoutParams(-1,dp(38)))
+        sheet.addView(modeChip,LinearLayout.LayoutParams(-1,dp(48)))
         // v4.9 途经点一行：“途经：A → B”  [+ 途经点] [清除]
         viaRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         viaText = TextView(this).apply {
@@ -663,8 +665,8 @@ class RoutePlanActivity : AppCompatActivity() {
         viaClear = chip("清除") { vias.clear(); refreshVias(); calculate() }.apply {
             background = S.round(this@RoutePlanActivity, S.CARD2, 16f, S.STROKE); setTextColor(S.SUB)
         }
-        viaRow.addView(viaAdd, LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(8) })
-        viaRow.addView(viaClear, LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
+        viaRow.addView(viaAdd, LinearLayout.LayoutParams(-2, dp(48)).apply { leftMargin = dp(8) })
+        viaRow.addView(viaClear, LinearLayout.LayoutParams(-2, dp(48)).apply { leftMargin = dp(6) })
         sheet.addView(viaRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         // 规划中 / 失败提示
         statusText = TextView(this).apply {
@@ -682,16 +684,16 @@ class RoutePlanActivity : AppCompatActivity() {
         })
         // 开始导航
         startBtn = TextView(this).apply {
-            text = "开始导航"; textSize = 18f; setTextColor(S.PINK); typeface = S.BOLD
+            text = "开始导航"; textSize = 18f; setTextColor(Color.WHITE); typeface = S.BOLD
             letterSpacing = 0.08f; gravity = Gravity.CENTER
-            background = S.gradient(this@RoutePlanActivity, 16f)
+            background = S.round(this@RoutePlanActivity,S.PINK,16f)
             setOnClickListener { startNav() }
         }
         sheet.addView(startBtn, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(12) })
         amapShareBtn = chip("用高德打开分享") { shareRoute?.let { openAmapShare(it.sourceUrl, it.nativeUri) } }.apply {
             visibility = View.GONE; setTextColor(S.AMBER)
         }
-        sheet.addView(amapShareBtn, LinearLayout.LayoutParams(-1, dp(40)))
+        sheet.addView(amapShareBtn, LinearLayout.LayoutParams(-1, dp(48)))
         root.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
         styleChips()
     }
@@ -720,10 +722,10 @@ class RoutePlanActivity : AppCompatActivity() {
 
     private fun styleChips() {
         for ((c, on) in listOf(hwChip to avoidHighway, emuChip to emulate)) {
-            c.background = S.round(this, if (on) Color.parseColor("#33FF4FB4") else S.CARD2, 16f, if (on) S.PINK else S.STROKE)
+            c.background = S.round(this, if (on) S.CARD else S.CARD2, 12f, if (on) S.PINK else S.STROKE)
             c.setTextColor(if (on) S.PINK else S.SUB)
         }
-        emuChip.text = if (emulate) "模拟 ✓" else "模拟"
+        emuChip.text = if (emulate) "模拟已开" else "模拟"
     }
 
     private fun buildLocButton() {
@@ -736,7 +738,7 @@ class RoutePlanActivity : AppCompatActivity() {
                 if (!myLat.isNaN()) aMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(myLat, myLng), 16f))
             }
         }
-        root.addView(locBtn, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.BOTTOM or Gravity.END).apply {
+        root.addView(locBtn, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply {
             rightMargin = dp(14); bottomMargin = dp(260)
         })
         sheet.addOnLayoutChangeListener { _, _, t, _, b, _, _, _, _ ->
@@ -747,7 +749,7 @@ class RoutePlanActivity : AppCompatActivity() {
 
     private lateinit var favoriteButton: TextView
     private fun updateFavoriteButton() {
-        favoriteButton.text = if (FavoritePlaces.find(this,destLat,destLng)==null) "☆ 收藏到常用目的地" else "★ 已收藏 · 改名 / 删除"
+        favoriteButton.text = if (FavoritePlaces.find(this,destLat,destLng)==null) "收藏到常用目的地" else "已收藏 · 改名或删除"
     }
 
     private fun chooseDest(name: String, addr: String, lat: Double, lng: Double, share: AmapShare.Route? = null) {
@@ -967,10 +969,10 @@ class RoutePlanActivity : AppCompatActivity() {
                 if (seq != calcSeq || shareRoute !== sr || selected != routeId) return@runOnUiThread
                 val pct = (ratio * 100).toInt()
                 if (pct >= 95) {
-                    sheetSub.text = "${destAddr}\n✓ 和分享的路线吻合 $pct%"
+                    sheetSub.text = "${destAddr}\n与分享路线吻合 $pct%"
                     sheetSub.setTextColor(S.GREEN)
                 } else {
-                    sheetSub.text = "${destAddr}\n⚠ 和分享的路线吻合 $pct%，约 ${S.distText(bad)} 不一样（虚线是原路线）"
+                    sheetSub.text = "${destAddr}\n与分享路线吻合 $pct%，约 ${S.distText(bad)} 不同（虚线为原路线）"
                     sheetSub.setTextColor(S.AMBER)
                 }
             }

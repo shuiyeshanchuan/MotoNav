@@ -49,6 +49,8 @@ object AppStatus {
             BleLink.pairHint.isNotEmpty() && !verified -> BleLink.pairHint
             connected && verified -> "已配对验证"
             connected -> "正在验证配对…"
+            searching -> "请确认圆屏已通电并在手机附近"
+            BleLink.status == title -> "圆屏通电后会自动连接"
             else -> BleLink.status
         }
         return DeviceUiState(
@@ -58,7 +60,7 @@ object AppStatus {
             title = title,
             detail = detail,
             batteryPercent = BleLink.screenBatteryPct,
-            batteryCharging = BleLink.screenBattery.contains("⚡"),
+            batteryCharging = BleLink.screenBatteryCharging,
             needsSystemUnpair = BleLink.needUnbond,
             board = BleLink.screenBoard,
             firmware = BleLink.screenFirmware

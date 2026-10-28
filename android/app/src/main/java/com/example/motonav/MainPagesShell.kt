@@ -1,8 +1,7 @@
 package com.example.motonav
 
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Path
+import android.content.res.ColorStateList
+import android.graphics.drawable.RippleDrawable
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -15,8 +14,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
-import kotlin.math.cos
-import kotlin.math.sin
 
 /** Three independent, lazily created pages; bottom navigation never scrolls away. */
 class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
@@ -36,9 +33,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
         }
     }
     private val tabs=ArrayList<LinearLayout>()
-    private val icons=ArrayList<PageIcon>()
     private val labels=ArrayList<TextView>()
-    private val indicators=ArrayList<FrameLayout>()
     var selectedPage=0;private set
 
     init {
@@ -46,26 +41,24 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
         WindowCompat.setDecorFitsSystemWindows(activity.window,false)
         addView(host,LayoutParams(-1,0,1f))
         val navigation=LinearLayout(activity).apply {
-            orientation=HORIZONTAL;setPadding(dp(5),dp(5),dp(5),dp(5))
-            Neumorphic.applyRaised(this, 18f)
+            orientation=HORIZONTAL;setPadding(dp(8),dp(6),dp(8),dp(6))
+            background=S.round(activity,S.CARD,0f,S.STROKE)
         }
         titles.forEachIndexed { index,title ->
             val tab=LinearLayout(activity).apply {
                 orientation=VERTICAL;gravity=Gravity.CENTER;isFocusable=true
-                contentDescription=title;minimumHeight=dp(58)
+                contentDescription=title;minimumHeight=dp(52)
                 setOnClickListener{showPage(index)}
             }
-            val indicator=FrameLayout(activity)
-            val icon=PageIcon(index)
-            indicator.addView(icon,FrameLayout.LayoutParams(dp(23),dp(23),Gravity.CENTER))
-            tab.addView(indicator,LayoutParams(dp(44),dp(29)))
             val label=TextView(activity).apply {
-                text=title;textSize=11.5f;setTextColor(S.SUB);gravity=Gravity.CENTER
-                isSingleLine=true;includeFontPadding=false;setPadding(0,dp(4),0,0)
+                text=title;textSize=15f;setTextColor(S.SUB);gravity=Gravity.CENTER
+                isSingleLine=true;includeFontPadding=false
             }
             tab.addView(label,LayoutParams(-1,-2))
-            navigation.addView(tab,LayoutParams(0,dp(58),1f))
-            tabs+=tab;icons+=icon;labels+=label;indicators+=indicator
+            navigation.addView(tab,LayoutParams(0,dp(52),1f).apply {
+                leftMargin=dp(3);rightMargin=dp(3)
+            })
+            tabs+=tab;labels+=label
         }
         addView(navigation,LayoutParams(-1,-2))
         ViewCompat.setOnApplyWindowInsetsListener(this){view,insets->
@@ -90,8 +83,8 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
             val selected=i==index;tab.isSelected=selected
             labels[i].setTextColor(if(selected)S.PINK else S.SUB)
             labels[i].typeface=if(selected)S.BOLD else S.MEDIUM
-            indicators[i].background=if(selected) Neumorphic.recessed(activity,14f) else null
-            icons[i].active=selected
+            tab.background=RippleDrawable(ColorStateList.valueOf(S.CARD2),
+                S.round(activity,if(selected)S.CARD2 else S.CARD,12f),null)
         }
         onSelected(index)
     }
@@ -101,31 +94,4 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
         out.putIntArray("main_page_scroll",IntArray(3){pages[it]?.scrollY ?: restoreY[it]})
     }
 
-    private inner class PageIcon(private val index:Int):View(activity) {
-        var active=false
-            set(value){if(field!=value){field=value;invalidate()}}
-        private val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style=Paint.Style.STROKE;strokeWidth=1.8f;strokeCap=Paint.Cap.ROUND;strokeJoin=Paint.Join.ROUND
-        }
-        override fun onDraw(canvas:Canvas) {
-            super.onDraw(canvas)
-            canvas.save();canvas.scale(width/24f,height/24f);paint.color=if(active)S.PINK else S.SUB
-            fun line(x1:Float,y1:Float,x2:Float,y2:Float)=canvas.drawLine(x1,y1,x2,y2,paint)
-            when(index) {
-                0->{
-                    canvas.drawCircle(12f,12f,9f,paint)
-                    canvas.drawPath(Path().apply{moveTo(7f,13f);lineTo(12f,8f);lineTo(17f,13f);moveTo(12f,8f);lineTo(12f,18f)},paint)
-                }
-                1->{
-                    canvas.drawCircle(12f,12f,6.5f,paint);canvas.drawCircle(12f,12f,2.5f,paint)
-                    canvas.drawPath(Path().apply{moveTo(12f,3f);lineTo(12f,6f);moveTo(12f,18f);lineTo(12f,21f)},paint)
-                }
-                2->{
-                    canvas.drawCircle(12f,12f,3f,paint)
-                    repeat(8){val a=it*Math.PI/4;line((12+6.5*cos(a)).toFloat(),(12+6.5*sin(a)).toFloat(),(12+9*cos(a)).toFloat(),(12+9*sin(a)).toFloat())}
-                }
-            }
-            canvas.restore()
-        }
-    }
 }

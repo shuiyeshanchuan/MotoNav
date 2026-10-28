@@ -267,7 +267,7 @@ class ProbeActivity : AppCompatActivity() {
         root.addView(TextView(this).apply { text = "高德探测"; textSize = 24f; typeface = S.BOLD; setTextColor(S.TEXT) })
         root.addView(TextView(this).apply {
             text = "用法：打开下面的权限 → 去高德地图开始导航（摩托车，可用模拟导航）→ 导航中按手机的「主页」回到桌面，" +
-                "等 30 秒（高德可能会弹出小悬浮窗）→ 再锁屏 30 秒 → 回到这里点「复制全部记录」，粘贴发给 Claude。"
+                "等 30 秒（高德可能会弹出小悬浮窗）→ 再锁屏 30 秒 → 回到这里点「复制全部记录」，用于问题分析。"
             textSize = 13f; setTextColor(S.SUB); setLineSpacing(0f, 1.2f); setPadding(0, dp(6), 0, dp(12))
         })
 
@@ -296,8 +296,8 @@ class ProbeActivity : AppCompatActivity() {
             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cm.setPrimaryClip(ClipData.newPlainText("高德探测", "MotoNav $APP_VERSION 高德探测记录\n\n" + AmapProbe.text()))
             Toast.makeText(this, "已复制，可以直接粘贴发送", Toast.LENGTH_SHORT).show()
-        }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(8) })
-        btns.addView(button("清空", false) { AmapProbe.clear(); refresh() }, LinearLayout.LayoutParams(dp(90), dp(46)))
+        }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
+        btns.addView(button("清空", false) { AmapProbe.clear(); refresh() }, LinearLayout.LayoutParams(dp(90), dp(48)))
         root.addView(btns)
 
         logText = TextView(this).apply {
@@ -326,7 +326,7 @@ class ProbeActivity : AppCompatActivity() {
         val st = TextView(this).apply { textSize = 12f; setTextColor(S.SUB); isSingleLine = true; ellipsize = TextUtils.TruncateAt.END }
         col.addView(st)
         row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
-        if (btn != null && onClick != null) row.addView(button(btn, false, onClick), LinearLayout.LayoutParams(-2, dp(36)))
+        if (btn != null && onClick != null) row.addView(button(btn, false, onClick), LinearLayout.LayoutParams(-2, dp(48)))
         parent.addView(row)
         return st
     }
@@ -334,7 +334,8 @@ class ProbeActivity : AppCompatActivity() {
     private fun button(t: String, primary: Boolean, onClick: () -> Unit) = TextView(this).apply {
         text = t; textSize = 14f; gravity = Gravity.CENTER; typeface = S.MEDIUM
         setTextColor(if (primary) Color.WHITE else S.TEXT)
-        background = if (primary) S.gradient(this@ProbeActivity, 14f) else S.round(this@ProbeActivity, S.CARD2, 14f, S.STROKE)
+        background = S.round(this@ProbeActivity, if (primary) S.PINK else S.CARD2, 14f,
+            if (primary) 0 else S.STROKE)
         setPadding(dp(14), 0, dp(14), 0)
         setOnClickListener { onClick() }
     }

@@ -4,7 +4,9 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
@@ -49,22 +51,24 @@ class MotorWebActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         supportActionBar?.hide()
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(14,10,20)) }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(NavStyle.BG) }
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = NavStyle.BG
+        window.navigationBarColor = NavStyle.BG
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
             view.setPadding(bars.left,bars.top,bars.right,maxOf(bars.bottom,ime.bottom)); insets
         }
-        val toolbar = LinearLayout(this)
-        fun tool(text: String, click: () -> Unit) { toolbar.addView(button(text, click), LinearLayout.LayoutParams(0, 52.dp, 1f)) }
+        val toolbar = LinearLayout(this).apply { setPadding(8.dp, 4.dp, 8.dp, 4.dp) }
+        fun tool(text: String, click: () -> Unit) { toolbar.addView(button(text, click = click), LinearLayout.LayoutParams(0, 52.dp, 1f)) }
         tool("返回首页") { finish() }
         tool("粘贴链接") { linkDialog() }
         tool("刷新") { web.reload() }
         root.addView(toolbar)
         status = TextView(this).apply {
             text = "网页摩托车实验：选摩托车和起终点，再点下方读取。也可粘贴完整路线链接。"
-            setTextColor(Color.LTGRAY); textSize = 12f; setPadding(12.dp, 6.dp, 12.dp, 6.dp)
+            setTextColor(NavStyle.SUB); textSize = 13f; setPadding(12.dp, 6.dp, 12.dp, 6.dp)
         }
         root.addView(status)
         CookieManager.getInstance().setAcceptCookie(true)
@@ -116,12 +120,12 @@ class MotorWebActivity : AppCompatActivity() {
             }
         }
         root.addView(web, LinearLayout.LayoutParams(-1, 0, 1f))
-        readButton = button("读取摩托路线") { readPage() }
+        readButton = button("读取摩托路线", true) { readPage() }
         root.addView(readButton, LinearLayout.LayoutParams(-1, 54.dp))
         root.addView(button("继续当前网页导航") {
             if (WebMotorGuide.route != null) startActivity(Intent(this, MotorWebNavActivity::class.java))
             else Toast.makeText(this, "还没有开始网页导航", Toast.LENGTH_SHORT).show()
-        }, LinearLayout.LayoutParams(-1, 44.dp))
+        }, LinearLayout.LayoutParams(-1, 48.dp))
         setContentView(root)
         currentUrl = intent.getStringExtra("initial_motor_url") ?: getSharedPreferences("webmotor",0).getString("last_page", WebMotorRoutes.PAGE)
             ?.takeIf { WebMotorRoutes.isPage(it) } ?: WebMotorRoutes.PAGE
@@ -132,9 +136,12 @@ class MotorWebActivity : AppCompatActivity() {
     }
 
     private val Int.dp: Int get() = (this * resources.displayMetrics.density).toInt()
-    private fun button(text: String, click: () -> Unit) = TextView(this).apply {
+    private fun button(text: String, primary: Boolean = false, click: () -> Unit) = TextView(this).apply {
         this.text = text; textSize = 15f; gravity = android.view.Gravity.CENTER
-        setTextColor(Color.rgb(67,225,240)); setBackgroundColor(Color.rgb(26,20,36))
+        setTextColor(if (primary) Color.WHITE else NavStyle.PINK)
+        background = RippleDrawable(ColorStateList.valueOf(NavStyle.STROKE),
+            NavStyle.round(this@MotorWebActivity, if (primary) NavStyle.PINK else NavStyle.CARD2, 12f), null)
+        minHeight = 48.dp
         setOnClickListener { click() }
     }
 
