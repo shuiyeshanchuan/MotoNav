@@ -23,8 +23,10 @@ String pendingEvt = "";              // 待发给手机的触摸事件
 #define PWR_HOLD_MENU_MS 2000UL
 bool powerButtonDown = false;
 unsigned long powerButtonAt = 0;
+unsigned long powerButtonReleaseAt = 0;
 bool powerMenuOn = false;
 bool powerMenuDismissedForHold = false;
+bool powerMenuNeedsTouchRelease = false;
 
 // v5.3 触摸芯片一有动静就拉低中断脚；平时只看这个标记，不用一直读 I2C
 volatile bool touchIrq = false;
@@ -42,8 +44,12 @@ void powerButtonInit() {
   pinMode(PWR_BUTTON_PIN, INPUT);
 }
 
+void drawCallScreen();
+
 static void restoreAfterPowerMenu() {
-  if (page == 2) musicDirty = true;
+  if (callOn) drawCallScreen();
+  else if (pairOn) drawPairScreen();
+  else if (page == 2) musicDirty = true;
   else if (page == 1) wxDirty = true;
   else if (inNav) navDirty = true;
   else drawWaiting(shownConn ? WAIT_READY : WAIT_NOLINK);
@@ -79,17 +85,22 @@ void powerButtonPoll() {
   const unsigned long now = millis();
   const bool pressed = digitalRead(PWR_BUTTON_PIN) == HIGH;
   if (!pressed) {
+    if (!powerButtonDown) return;
+    if (!powerButtonReleaseAt) powerButtonReleaseAt = now;
+    if (now - powerButtonReleaseAt < 80) return;  // Ignore short GPIO3 dips while PWR is held.
     powerButtonDown = false;
     powerButtonAt = 0;
     powerMenuDismissedForHold = false;
     return;
   }
+  powerButtonReleaseAt = 0;
   if (!powerButtonDown) {
     powerButtonDown = true;
     powerButtonAt = now;
   }
   if (!powerMenuOn && !powerMenuDismissedForHold && now - powerButtonAt >= PWR_HOLD_MENU_MS) {
     powerMenuOn = true;
+    powerMenuNeedsTouchRelease = true;
     drawPowerMenu();
   }
 }
@@ -116,6 +127,11 @@ void touchPoll() {
   int16_t x[5] = {0}, y[5] = {0};
   uint8_t n = touch.getPoint(x, y, 1);
   if (powerMenuOn) {
+    // A touch that began on the previous page must end before it can select a menu action.
+    if (powerButtonDown || powerMenuNeedsTouchRelease) {
+      if (n == 0) { touchDown = false; powerMenuNeedsTouchRelease = false; }
+      return;
+    }
     if (n > 0) {
       if (!touchDown) {
         touchDown = true;

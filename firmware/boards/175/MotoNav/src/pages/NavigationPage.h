@@ -3,6 +3,8 @@
 #include "../../TurnRingMotion.h"
 TurnRingMotion turnRingMotion;
 uint32_t ringAnimationDrawAt = 0;
+unsigned long mapWaitAt = 0;
+bool mapWaitExpired = false;
 void updateRingTarget() {
   bool hasRing = (navDir != "S") && navDist <= STAGE_FAR_M;
   float target = hasRing ? (float)(STAGE_FAR_M - navDist) / STAGE_FAR_M : 0;
@@ -28,7 +30,26 @@ void animateRing() {
 // 按当前全部状态画一整帧导航画面
 void drawNavFrame() {
   onWaitScreen = false;                                 // v3.6 离开首页，猫猫不再动
-  if (mapModeActive()) { drawMapFrame(); return; }      // v2.0 小地图
+  if (mapModeActive()) {
+    mapWaitAt = 0; mapWaitExpired = false;
+    drawMapFrame(); return;
+  }
+  // After a fresh connection, navigation text can arrive before the map block.
+  // Show a short loading state instead of flashing the arrow page for one second.
+  if (mapOn && !cruiseOn && styleIdx() != ST_DRAGON && !mapWaitExpired) {
+    if (!mapWaitAt) mapWaitAt = millis();
+    if (millis() - mapWaitAt < 2500) {
+      frameIsMap = false;
+      gfx->fillScreen(C_BLACK);
+      drawStatus();
+      printCentered("LOADING MAP", CX, 205, 3, C_CYAN);
+      printCentered(distText(navDist), CX, 262, 4, C_WHITE);
+      needFlush = true;
+      return;
+    }
+    mapWaitExpired = true; // Keep the turn arrow as a fallback if the map cannot load.
+  }
+  if (!mapOn || cruiseOn) { mapWaitAt = 0; mapWaitExpired = false; }
   viewInit = false;
   if (cruiseOn) {                                       // v4.8 巡航但还没有地图：只显示车速和测速
     gfx->fillScreen(C_BLACK);

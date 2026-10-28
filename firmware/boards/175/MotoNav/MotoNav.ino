@@ -169,6 +169,8 @@ void setup() {
 
 // 主循环：接收消息、处理输入、调度页面、绘图和推屏。
 void loop() {
+  powerButtonPoll();                                   // Keep PWR responsive while navigation is busy.
+  if (powerMenuOn && sliding) dragAbort();
   hidMediaTick();                                      // press/release without blocking navigation
   static uint32_t lyricConnectionEpoch = 0;
   if (lyricConnectionEpoch != mediaConnectionEpoch) {
@@ -252,8 +254,8 @@ void loop() {
   bool mapNow = inNav && mapModeActive();
   if (mapNow != wasMap) { wasMap = mapNow; navDirty = true; }   // 进出地图模式时整帧重画
   if (mapNow) navDirty = true;
+  if (mapWaitAt && !mapWaitExpired && !mapNow && millis() - mapWaitAt >= 2500) navDirty = true;
 
-  powerButtonPoll();                                   // 1.75C PWR 键：2 秒弹出关机/重启菜单
   touchPoll();                                         // v5.2 按住接听 / v5.3 滑动换页
   batPoll();                                           // v6.8 电量
   // 4. 需要时重画导航画面
@@ -275,7 +277,7 @@ void loop() {
   static bool wasCall = false;
   if (callOn && (millis() - callSeenAt > 120000 || !conn)) callOn = false;      // 2 分钟没消息 / 断开：收起
   if (callOn && sliding) dragAbort();                  // v5.5 拖到一半来电：放弃换页
-  if (callOn) {
+  if (callOn && !powerMenuOn) {
     static unsigned long lastCallDraw = 0;
     if (millis() - lastCallDraw > 80) { lastCallDraw = millis(); drawCallScreen(); }
     wasCall = true;
@@ -292,7 +294,7 @@ void loop() {
   if (fxOn && (millis() - fxAt > fxDur || !conn)) fxOn = false;
   if (fxOn) {
     static unsigned long lastFxDraw = 0;
-    if (!callOn && !pairOn && page == 0 && !sliding && millis() - lastFxDraw >= 33) {
+    if (!callOn && !pairOn && !powerMenuOn && page == 0 && !sliding && millis() - lastFxDraw >= 33) {
       lastFxDraw = millis();
       drawArriveFx(millis() - fxAt);
     }
@@ -309,13 +311,13 @@ void loop() {
 
   musicTick();
   weatherTick();                                       // v5.3 天气页
-  if (inNav && navDirty && !fxOn && !callOn && !pairOn && page == 0 && !sliding) {
+  if (inNav && navDirty && !fxOn && !callOn && !pairOn && !powerMenuOn && page == 0 && !sliding) {
     drawNavFrame();
     navDirty = false;
   }
 
   // 5. 导航中长时间收不到任何消息 → 数据中断提示
-  if (inNav && conn && !fxOn && !callOn && !pairOn && page == 0 && !sliding && !staleShown && millis() - lastRxMs > STALE_MS) {
+  if (inNav && conn && !fxOn && !callOn && !pairOn && !powerMenuOn && page == 0 && !sliding && !staleShown && millis() - lastRxMs > STALE_MS) {
     staleShown = true;
     drawStaleOverlay();
   }
@@ -325,7 +327,7 @@ void loop() {
   if (!conn || !trafficLightLab.valid(lightNow)) trafficLightLab.clear();
   const bool lightPreview=trafficLightPreviewUntil && (int32_t)(trafficLightPreviewUntil-lightNow)>0;
   if(!lightPreview)trafficLightPreviewUntil=0;
-  const bool showLight=(trafficLightLab.valid(lightNow) || trafficLightFrame.valid(lightNow) || lightPreview) && conn && page==0 && !sliding && !pairOn && !callOn && !fxOn && !staleShown;
+  const bool showLight=(trafficLightLab.valid(lightNow) || trafficLightFrame.valid(lightNow) || lightPreview) && conn && page==0 && !sliding && !pairOn && !callOn && !fxOn && !powerMenuOn && !staleShown;
   static bool lightShown=false;
   static uint32_t lightDrawAt=0;
   animateCat();
@@ -333,7 +335,7 @@ void loop() {
     if(!lightShown || needFlush || lightNow-lightDrawAt>=200) {
       drawTrafficLightLab(lightNow);lightDrawAt=lightNow;
     }
-  } else if(lightShown && !pairOn && !callOn && !fxOn && !sliding) {
+  } else if(lightShown && !pairOn && !callOn && !fxOn && !powerMenuOn && !sliding) {
     if(page==2)musicDirty=true;
     else if(page==1)wxDirty=true;
     else if(inNav)navDirty=true;
@@ -342,6 +344,9 @@ void loop() {
   if(lightShown!=showLight)Serial.printf("TL OVERLAY visible=%d inNav=%d at=%lu valid=%d conn=%d page=%d sliding=%d pair=%d call=%d fx=%d stale=%d\n",
     showLight,inNav,lightNow,trafficLightLab.valid(lightNow),conn,page,sliding,pairOn,callOn,fxOn,staleShown);
   lightShown=showLight;
+
+  // Packets and connection events may have drawn behind the modal this loop.
+  if (powerMenuOn && needFlush) drawPowerMenu();
 
   // 6. 有变化才把画布推到屏幕（小地图帧异步推送，其他画面同步推送）
   if (needFlush && !sliding) {

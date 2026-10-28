@@ -149,8 +149,10 @@ import java.io.File
  *         调试信息、测试按钮、屏幕速度、地图来源、帧率等挪进「开发者选项」，默认隐藏（连点 5 下版本号打开）
  *   v8.3.38  导航可读性：转弯距离分段取整、手机显示后续两步转弯、长路名滚动、超速状态和导航数据新鲜度；
  *         配套圆屏固件 v7.12.9-nav.1
+ *   v8.3.39  圆屏方向圆盘默认锁定，打开调节开关后拖动并在松手时保存；微调按钮文字改为深色。
+ *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  */
-const val APP_VERSION = "v8.3.38"
+const val APP_VERSION = "v8.3.39"
 
 class MainActivity : AppCompatActivity() {
     // ---------------- 配色（Neumorphism：同色表面 + 左上亮/右下暗） ----------------
@@ -1086,10 +1088,20 @@ class MainActivity : AppCompatActivity() {
             brightSub.text = if (Brightness.auto) "当前 $cur · ${Brightness.desc}" else "手动 · 当前 $cur（拖动滑块调节）"
         }
         card.addView(divider())
-        // v6.3 圆屏方向：按住圆盘转动
+        // 圆屏方向：默认锁定圆盘，避免滚动设置页时误转。
         card.addView(subhead("圆屏方向"))
         val dial = RotDial(this, PINK, CYAN, TEXT, SUB, STROKE)
         dial.setAngle(MapFeeder.screenDeg)
+        dial.isEnabled = false
+        var dialUnlocked = false
+        card.addView(settingRow("启用圆盘调节", "关闭时可正常上下滑动；打开后按住圆盘旋转，松手自动保存",
+            toggle({ dialUnlocked }) { on ->
+                dialUnlocked = on
+                dial.isEnabled = on
+                dial.alpha = if (on) 1f else 0.78f
+                dial.invalidate()
+            }))
+        dial.alpha = 0.78f
         var lastSendAt = 0L
         dial.onChange = { d, final ->
             val now = android.os.SystemClock.elapsedRealtime()
@@ -1100,7 +1112,7 @@ class MainActivity : AppCompatActivity() {
         }
         card.addView(dial, lpMatch(bottom = 12))
         val btnRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
-        fun stepBtn(t: String, act: () -> Unit) = pillButton(t, BG, act).apply { textSize = 17f }
+        fun stepBtn(t: String, act: () -> Unit) = pillButton(t, TEXT, act).apply { textSize = 17f }
         val nudge = { delta: Int ->
             val d = ((dial.angle + delta) % 360 + 360) % 360
             dial.setAngle(d); MapFeeder.setScreenDeg(d, save = true)
@@ -1109,7 +1121,7 @@ class MainActivity : AppCompatActivity() {
         btnRow.addView(stepBtn("+1°") { nudge(1) }, LinearLayout.LayoutParams(dp(84), dp(44)).apply { rightMargin = dp(10) })
         btnRow.addView(stepBtn("归零") { dial.setAngle(0); MapFeeder.setScreenDeg(0, save = true) }, LinearLayout.LayoutParams(dp(84), dp(44)))
         card.addView(btnRow)
-        card.addView(note("按住圆盘转动，粉色指针 = 画面上方在圆屏上朝的方向，圆屏实时跟着转；转到 0°/90°/180°/270° 附近会吸住"))
+        card.addView(note("开启调节后按住圆盘转动，松手自动保存；粉色指针表示画面上方，接近 0°/90°/180°/270° 时会吸附。下方按钮始终可用。"))
         card.addView(divider(top = 14))
         // v6.4 配对验证（固件 v6.5）
         card.addView(settingRow("配对的手机",

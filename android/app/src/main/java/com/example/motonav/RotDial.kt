@@ -114,7 +114,7 @@ class RotDial(ctx: Context, private val pink: Int, private val cyan: Int, privat
         pBig.textSize = hubR * 0.62f
         c.drawText("$angle°", cx, cy + pBig.textSize * 0.25f, pBig)
         pSmall.textSize = hubR * 0.2f
-        c.drawText("按住转动", cx, cy + hubR * 0.58f, pSmall)
+        c.drawText(if (isEnabled) "按住转动" else "已锁定", cx, cy + hubR * 0.58f, pSmall)
     }
 
     // ---- 手指转圆盘 ----
@@ -130,6 +130,7 @@ class RotDial(ctx: Context, private val pink: Int, private val cyan: Int, privat
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (!isEnabled) return false
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 // v7.4 只有按在圆盘上才转；圆盘外面（左右空白处）交给页面，照常上下滑动

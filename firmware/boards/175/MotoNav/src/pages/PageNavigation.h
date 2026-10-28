@@ -346,7 +346,7 @@ void musicTick() {
     else { musicAck = 0; musicAckUntil = 0; }
     musicDirty = true;
   }
-  if (page != 2 || callOn || pairOn || sliding) return;
+  if (page != 2 || callOn || pairOn || powerMenuOn || sliding) return;
   if (inNav && !cruiseOn && navDir != "S" && navDir.length() && navDist > 0 && navDist < 200 && millis() - pageAt > 3000) {
     showPageAnimated(0, -1, 0);
     return;
@@ -356,7 +356,7 @@ void musicTick() {
 
 // 每圈调用：天气页要不要重画、要不要回导航
 void weatherTick() {
-  if (page != 1 || callOn || sliding) return;
+  if (page != 1 || callOn || powerMenuOn || sliding) return;
   unsigned long now = millis();
   // 导航中：看 15 秒自动回去；快到路口也立刻回去
   if (inNav && (now - pageAt > 15000 || (navDir != "S" && navDir.length() && navDist > 0 && navDist < 200))) {

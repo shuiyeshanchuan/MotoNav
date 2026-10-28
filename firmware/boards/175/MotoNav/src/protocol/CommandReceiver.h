@@ -5,6 +5,7 @@ void resetNavState() {
   if (idlePowerOffNavigationActive(true, inNav, cruiseOn, navDir == "A"))
     idlePowerOffReset(&idlePowerOffTimer, millis());
   inNav = false;
+  mapWaitAt = 0; mapWaitExpired = false;
   tripOn = false; lightDist = -1;                       // v3.1
   nextNavDir = ""; nextNavDist = -1; afterNextNavDir = ""; afterNextNavDist = -1; // v8.3.38
   mapCamN = 0;                                          // v3.5
