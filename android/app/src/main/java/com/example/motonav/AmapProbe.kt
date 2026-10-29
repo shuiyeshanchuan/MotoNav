@@ -11,6 +11,7 @@ import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
@@ -223,10 +224,124 @@ class AmapNotifyListener : NotificationListenerService() {
 class AmapScreenReader : AccessibilityService() {
     private var lastAt = 0L
 
-    override fun onServiceConnected() { AmapProbe.add("系统", "ac", "屏幕读取已连接") }
+    companion object {
+        @Volatile private var connected: AmapScreenReader? = null
+
+        fun isConnected(): Boolean = connected != null
+        fun hasWechatAnswerControl(): Boolean = try { connected?.findWechatAnswer(false) == true }
+            catch (_: RuntimeException) { false }
+        fun clickWechatAnswer(): Boolean = try { connected?.findWechatAnswer(true) == true }
+            catch (_: RuntimeException) { false }
+    }
+
+    override fun onServiceConnected() {
+        connected = this
+        AmapProbe.add("系统", "ac", "屏幕读取已连接")
+        notifyWechatUiChanged()
+    }
+
+    override fun onDestroy() {
+        if (connected === this) connected = null
+        notifyWechatUiChanged()
+        super.onDestroy()
+    }
+
+    private fun notifyWechatUiChanged() {
+        try { CallWatcher.onWechatUiChanged() }
+        catch (_: RuntimeException) { CallWatcher.lastInfo = "微信来电界面检查失败，请在手机接听" }
+    }
+
+    /** Refuse ambiguous pages and buttons; WeChat does not expose a stable call-control API. */
+    private fun findWechatAnswer(click: Boolean): Boolean {
+        val root = rootInActiveWindow ?: return false
+        if (root.packageName?.toString() != "com.tencent.mm") return false
+        val nodes = ArrayList<AccessibilityNodeInfo>(180)
+        val parents = ArrayList<AccessibilityNodeInfo>()
+        fun collect(node: AccessibilityNodeInfo, depth: Int) {
+            if (nodes.size >= 180) return
+            nodes.add(node)
+            if (depth >= 24) return
+            for (i in 0 until node.childCount) {
+                if (nodes.size >= 180) return
+                node.getChild(i)?.let { collect(it, depth + 1) }
+            }
+        }
+        fun labels(node: AccessibilityNodeInfo): List<String> = listOfNotNull(
+            node.text?.toString(), node.contentDescription?.toString()
+        ).map { it.trim().lowercase(Locale.ROOT) }
+        fun clickTarget(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+            var target = node
+            repeat(3) {
+                if (target == root) return null
+                if (target.isVisibleToUser && target.isEnabled && target.isClickable) return target
+                target = target.parent ?: return null
+                parents.add(target)
+            }
+            return null
+        }
+        try {
+            collect(root, 0)
+            if (nodes.size >= 180) return false
+            val pageLabels = nodes.flatMap(::labels)
+            val chatTabs = setOf("微信", "通讯录", "发现", "我")
+            if (pageLabels.filter { it in chatTabs }.distinct().size >= 2) return false
+            if (pageLabels.any { label ->
+                listOf("正在通话", "通话中", "已接通", "通话结束").any { it in label }
+            }) return false
+            val incoming = pageLabels.any {
+                listOf("邀请你进行语音通话", "邀请你进行视频通话", "语音来电", "视频来电",
+                    "语音通话邀请", "视频通话邀请", "incoming call", "incoming voice call", "incoming video call")
+                    .any { marker -> marker in it }
+            }
+            val callPage = pageLabels.any {
+                listOf("语音通话", "视频通话", "微信电话", "voice call", "video call")
+                    .any { marker -> marker in it }
+            }
+            val rootBounds = Rect().also { root.getBoundsInScreen(it) }
+            if (rootBounds.isEmpty) return false
+            fun buttonBounds(target: AccessibilityNodeInfo): Rect? {
+                val bounds = Rect().also { target.getBoundsInScreen(it) }
+                if (bounds.isEmpty || bounds.centerY() <= rootBounds.centerY() ||
+                    bounds.width().toLong() * bounds.height() >
+                    rootBounds.width().toLong() * rootBounds.height() / 3) return null
+                return bounds
+            }
+            val declineLabels = setOf("拒绝", "拒接", "挂断", "decline", "decline call", "reject", "reject call")
+            val hasDecline = nodes.any {
+                it.isVisibleToUser && labels(it).any(declineLabels::contains) &&
+                    clickTarget(it)?.let(::buttonBounds) != null
+            }
+            if (!incoming && !(callPage && hasDecline)) return false
+
+            val answerLabels = setOf("接听", "接听语音通话", "接听视频通话", "接听微信电话",
+                "answer", "answer call", "answer voice call", "answer video call", "accept call")
+            val candidates = LinkedHashMap<String, AccessibilityNodeInfo>()
+            for (node in nodes) {
+                if (!node.isVisibleToUser) continue
+                val names = labels(node)
+                if (names.none(answerLabels::contains) || names.any { label ->
+                    listOf("不接受", "拒绝", "拒接", "挂断", "cancel", "decline", "reject")
+                        .any { it in label }
+                }) continue
+                val target = clickTarget(node) ?: continue
+                val bounds = buttonBounds(target) ?: continue
+                candidates[bounds.toShortString()] = target
+                if (candidates.size > 1) return false
+            }
+            val target = candidates.values.singleOrNull() ?: return false
+            return !click || target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        } finally {
+            parents.forEach { it.recycle() }
+            nodes.forEach { if (it !== root) it.recycle() }
+        }
+    }
 
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         val pkg = e?.packageName?.toString() ?: return
+        if (pkg == "com.tencent.mm") {
+            notifyWechatUiChanged()
+            return
+        }
         if (!pkg.startsWith("com.autonavi")) return
         val now = SystemClock.elapsedRealtime()
         if (now - lastAt < 1500) return                      // 最多 1.5 秒读一次

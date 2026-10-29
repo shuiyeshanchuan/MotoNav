@@ -219,13 +219,17 @@ void drawNavHints(int bannerY) {
 
 // 一行路线事实，放在地图下沿或大箭头页底部，不覆盖车速、箭头和转弯距离。
 void drawRouteMeta(int y) {
-  if (routeSource < 1 || routeSource > 4) return;
+  if (routeSource < 1 || routeSource > 4) {
+    if (gpsWeak) printCentered(posAt ? "GPS WEAK  POSITION APPROX" : "GPS WEAK  WAIT FIX", CX, y, 1, C_ORANGE);
+    return;
+  }
   const char *sources[] = {"", "AMAP CAR", "AMAP BIKE", "AMAP SHARE", "MOTOR"};
-  const char *states[] = {"READY", "NAV", "REROUTE", "HOLD", "GPS WEAK", "ARRIVED"};
+  const char *states[] = {"READY", "NAV", "REROUTE", "HOLD", "GPS APPROX", "ARRIVED"};
   char timeText[6] = "--:--";
   if (routePlannedHHMM >= 0 && routePlannedHHMM <= 2359 && routePlannedHHMM % 100 < 60)
     snprintf(timeText, sizeof(timeText), "%02d:%02d", routePlannedHHMM / 100, routePlannedHHMM % 100);
-  String line = String(sources[routeSource]) + " " + timeText + " " + states[constrain(routeState, 0, 5)];
+  const char *stateText = routeState == 4 && !posAt ? "GPS WEAK" : states[constrain(routeState, 0, 5)];
+  String line = String(sources[routeSource]) + " " + timeText + " " + stateText;
   const int w = line.length() * 6 + 16;
   dimRect(CX - w / 2, y - 4, w, 15, 7, 52);
   printCentered(line, CX, y, 1, routeState == 2 ? C_ORANGE : routeState == 3 ? C_YELLOW : C_CYAN);

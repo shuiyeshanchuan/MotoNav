@@ -156,7 +156,7 @@ import java.io.File
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  */
-const val APP_VERSION = "v8.3.43"
+const val APP_VERSION = "v8.3.44"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -1105,9 +1105,13 @@ class MainActivity : AppCompatActivity() {
             toggle({ CallWatcher.privacyMode }) { CallWatcher.setPrivacyMode(this, it) }))
         val wechatSub = label("", 12f, SUB).apply {
             setOnClickListener {
-                if (CallWatcher.wechatEnabled && !AmapProbe.notifEnabled(this@MainActivity))
-                    try { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
-                    catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知使用权") }
+                if (CallWatcher.wechatEnabled) {
+                    val action = if (!AmapProbe.notifEnabled(this@MainActivity))
+                        "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"
+                    else Settings.ACTION_ACCESSIBILITY_SETTINGS
+                    try { startActivity(Intent(action)) }
+                    catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知或无障碍服务") }
+                }
             }
         }
         card.addView(settingRow("微信来电与通知", null,
@@ -1121,8 +1125,10 @@ class MainActivity : AppCompatActivity() {
             val access = AmapProbe.notifEnabled(this)
             wechatSub.text = if (CallWatcher.wechatEnabled && !access)
                 "需要通知使用权，点击这里前往系统设置"
-            else "圆屏提示微信来电和消息；微信通知提供接听操作时，可按住圆屏接听"
-            wechatSub.setTextColor(if (CallWatcher.wechatEnabled && !access) AMBER else SUB)
+            else if (CallWatcher.wechatEnabled && !AmapProbe.screenEnabled(this))
+                "微信通知无接听按钮时，需启用 MotoNav 无障碍服务；点击前往设置"
+            else "圆屏按住微信来电岛 0.5 秒尝试接听；实际接通取决于微信来电界面"
+            wechatSub.setTextColor(if (CallWatcher.wechatEnabled && (!access || !AmapProbe.screenEnabled(this))) AMBER else SUB)
         }
         card.addView(settingRow("显示微信消息详情", "默认显示发送者和消息摘要；关闭后只显示发送者",
             toggle({ CallWatcher.wechatMessageDetails }) { CallWatcher.setWechatMessageDetails(this, it) }))

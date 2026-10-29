@@ -1,11 +1,18 @@
 #pragma once
 // 导航状态重置、文字命令和总消息入口。由 MotoNav.ino 按依赖顺序包含，仅编译一次。
+void invalidateMapPose() {
+  // Keep downloaded map blocks for reuse, but never draw the old trip's player.
+  posAt = 0; posFrame = -1; posKmh = 0;
+  hdgRate = 0; corrX = corrY = 0; corrAt = 0; viewInit = false;
+  mapWaitAt = 0; mapWaitExpired = false; mapUnavailableShown = false;
+}
+
 void resetNavState() {
   trafficLightFrame.clear();trafficLightLab.clear();
   if (idlePowerOffNavigationActive(true, inNav, cruiseOn, navDir == "A"))
     idlePowerOffReset(&idlePowerOffTimer, millis());
   inNav = false;
-  mapWaitAt = 0; mapWaitExpired = false;
+  invalidateMapPose();
   tripOn = false; lightDist = -1;                       // v3.1
   nextNavDir = ""; nextNavDist = -1; afterNextNavDir = ""; afterNextNavDist = -1; // v8.3.38
   mapCamN = 0;                                          // v3.5
@@ -123,6 +130,7 @@ void handleText(const String &m) {
   }
   if (m == "P") return;                                 // 心跳
   if (m == "C") { stopArriveFx(); progReset(); resetNavState(); drawWaiting(WAIT_READY); return; }
+  if (m == "#P0") { invalidateMapPose(); navDirty = true; return; }
 
   if (m.startsWith("#v,")) { speedKmh = m.substring(3).toInt(); navDirty = true; return; }
   if (m.startsWith("#a")) {                              // v8.3.38 后续两次转弯：#a,方向,距离,方向,距离
@@ -377,7 +385,9 @@ void handleText(const String &m) {
   }
   if (m.startsWith("#w,")) { cleanOn = m.substring(3).toInt() != 0; navDirty = true; return; }   // v4.9 清爽模式
   if (m.startsWith("#z,")) {                             // v4.8 巡航模式开关
+    const bool startingCruise = !cruiseOn && m.substring(3).toInt() != 0;
     cruiseOn = m.substring(3).toInt() != 0;
+    if (startingCruise) invalidateMapPose();
     if (cruiseOn) { inNav = true; navDir = "S"; navDist = 0; ringActive = false; tripOn = false; laneN = 0; }
     navDirty = true;
     return;

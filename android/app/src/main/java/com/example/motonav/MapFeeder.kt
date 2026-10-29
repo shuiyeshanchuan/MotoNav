@@ -195,6 +195,7 @@ object MapFeeder {
     private var poseY = 0.0
     private var poseKmh = 0
     private var havePose = false
+    @Volatile private var poseApproximate = false
 
     private fun measuredPreparationSeconds(): Double {
         val rate = BleLink.lastRateKBs.takeIf { it > 0 } ?: 12.0
@@ -452,7 +453,18 @@ object MapFeeder {
 
     /** 新的一次导航：路线清空（地图块保留，位置附近的地图还能用） */
     fun onNaviStart() {
-        handler.post { routeKey = "" }
+        // The board may still have a valid map tile from the previous trip.
+        // Invalidate only its player pose before sending the new trip's fixes.
+        BleLink.send("#P0")
+        val reset = Runnable {
+            routeKey = ""
+            // A parked rider may begin another trip elsewhere. Do not freeze the
+            // new first fix against the previous trip's parked position.
+            havePose = false
+            poseApproximate = false
+            lastBearing = null
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) reset.run() else handler.post(reset)
     }
 
     // ================= 位置 =================
@@ -461,9 +473,13 @@ object MapFeeder {
 
     /** 每次定位调用（主线程）：lat/lng 为高德坐标，bearing 为朝向（度，正北 = 0，顺时针） */
     fun onLocation(lat: Double, lng: Double, bearing: Float, kmh: Int, accuracyM: Float) {
-        if (!lat.isFinite() || !lng.isFinite()) return
+        if (!lat.isFinite() || !lng.isFinite() || lat !in -90.0..90.0 || lng !in -180.0..180.0 ||
+            (lat == 0.0 && lng == 0.0)) return
         val poorFix = !accuracyM.isFinite() || accuracyM < 0f || accuracyM > 50f
-        if (poorFix && !havePose) return
+        // A finite rough first fix can locate a 2.4 km map block indoors.
+        // Keep speed at zero and freeze later weak fixes until accuracy recovers.
+        if (poorFix && !havePose && (!accuracyM.isFinite() || accuracyM < 0f || accuracyM > 500f)) return
+        val hadPose = havePose
         var f = frame
         if (f == null) {
             // v2.3 坐标原点取所在区域（0.1 度网格）的固定点，编号也由它决定：App 重启后保持不变
@@ -472,11 +488,16 @@ object MapFeeder {
             f = MapGeo.Frame(la, lo, id)
             frame = f
         }
-        val stopped = kmh < 2 && havePose
-        val x = if (poorFix || stopped) poseX else f.x(lng)
-        val y = if (poorFix || stopped) poseY else f.y(lat)
+        // A precise stationary fix must replace the rough seed once GPS recovers.
+        val stopped = kmh < 2 && havePose && !poseApproximate
+        val x = if (havePose && (poorFix || stopped)) poseX else f.x(lng)
+        val y = if (havePose && (poorFix || stopped)) poseY else f.y(lat)
         val mapKmh = if (poorFix) 0 else kmh
         poseX = x; poseY = y; poseKmh = mapKmh; havePose = true
+        // A weak fix after a precise one uses the old anchor, so keep that
+        // anchor precise. Only the initial rough coordinate is approximate.
+        if (!poorFix) poseApproximate = false
+        else if (!hadPose) poseApproximate = true
         // 低速或弱定位时固定车头方向；重新行驶且定位可靠后才接受新朝向。
         val validBearing = bearing.isFinite() && bearing in 0f..360f
         val hdg = if (validBearing && kmh >= 4 && !poorFix) bearing.also { lastBearing = it }
@@ -758,9 +779,10 @@ object MapFeeder {
     fun frameId(): Int? = frame?.id
 
     fun loadingStatus(): String = MapLoadStatus.text(enabled,routeOnly(),BleLink.isConnected,BleLink.verified,
-        frame!=null,haveChunk && chunkBytes!=null && !chunkAcked,
+        havePose,haveChunk && chunkBytes!=null && !chunkAcked,
         BleLink.bulkProgress(chunkType,chunkId) ?: -1,fetching,
-        lastFetchFail>0 && (status.contains("失败") || status.contains("内存不足")),haveConfirmedChunk && chunkAcked)
+        lastFetchFail>0 && (status.contains("失败") || status.contains("内存不足")),haveConfirmedChunk && chunkAcked) +
+        (if (havePose && poseApproximate) " · 定位较粗，地图位置仅供参考" else "")
 
     fun infoText(): String =
         if (!enabled) "已关闭" else if (routeOnly()) "龙珠雷达：绿色网格，无底图下载与传输\n$routeInfo${if (routeAcked) "（圆屏已确认）" else ""}" else "来源：${sourceName()}　$status\n$chunkInfo${if (chunkAcked) "（圆屏已确认）" else ""}\n" +

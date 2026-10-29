@@ -37,7 +37,7 @@ void drawMapFrame() {
   viewHdg += hstep;
   const bool dragon = styleIdx() == ST_DRAGON;
   bool vecOK = !dragon && mapValid && mapFrame == posFrame;
-  bool rasOK = !dragon && rasterValid && rasterFrame == posFrame;
+  bool rasOK = !dragon && rasterFrame == posFrame && rasterCoversPose();
   bool useRaster = rasOK && (!vecOK || rasterAt >= vectorAt);   // v2.5 两种都有时用最新收到的
   // 图片地图每像素 2 米，放太大会显得粗糙，所以最大放大倍数小一些
   float targetS = constrain(0.85f - posKmh * 0.006f, 0.38f, useRaster ? 0.6f : 0.85f);

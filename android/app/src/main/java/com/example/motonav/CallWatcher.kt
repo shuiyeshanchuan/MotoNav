@@ -1,6 +1,7 @@
 package com.example.motonav
 
 import android.Manifest
+import android.app.ActivityOptions
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
@@ -51,9 +52,13 @@ object CallWatcher {
     private var wechatCallKey: String? = null
     private var wechatCallLabel = ""
     private var wechatAnswerIntent: PendingIntent? = null
+    private var wechatOpenIntent: PendingIntent? = null
+    private var wechatAnswerAttemptPending = false
+    private var wechatLastCanAnswer = false
     private var wechatAnswerRequestedAt = 0L
     private var wechatCallStartedAt = 0L
     private var wechatCallPostTime = 0L
+    private var wechatCallWhen = 0L
     private var wechatCallPublishedAt = 0L
     private var lastWechatMessage = ""
     private var lastWechatMessageAt = 0L
@@ -69,11 +74,13 @@ object CallWatcher {
                     BleLink.send("#I,1,30000")
                 }
                 wechatCallKey != null && wechatEnabled && wechatCallFresh() ->
-                    BleLink.send("#I,2,30000,${if (wechatAnswerIntent != null) 1 else 0}")
+                    sendWechatCallState()
                 wechatCallKey != null -> {
                     wechatCallKey = null
                     wechatCallLabel = ""
                     wechatAnswerIntent = null
+                    wechatOpenIntent = null
+                    wechatAnswerAttemptPending = false
                     wechatAnswerRequestedAt = 0L
                     wechatCallPostTime = 0L
                     clearNotice()
@@ -126,6 +133,8 @@ object CallWatcher {
             main.removeCallbacks(clearWechatMessage)
             wechatCallKey = null
             wechatAnswerIntent = null
+            wechatOpenIntent = null
+            wechatAnswerAttemptPending = false
             wechatAnswerRequestedAt = 0L
             wechatCallStartedAt = 0L
             wechatCallPostTime = 0L
@@ -260,16 +269,63 @@ object CallWatcher {
             } catch (_: RuntimeException) { null }
             if (answer?.creatorPackage == "com.tencent.mm") return answer
         }
+        val answerLabels = setOf("接听", "接听语音通话", "接听视频通话", "接听电话",
+            "answer", "answer call", "answer voice call", "answer video call", "accept call")
+        val candidates = ArrayList<PendingIntent>()
         for (action in n.actions.orEmpty()) {
             val title = action.title?.toString()?.trim()?.lowercase(Locale.ROOT).orEmpty()
-            if (listOf("拒绝", "挂断", "取消", "decline", "reject", "hang", "ignore").any { it in title }) continue
-            if (listOf("接听", "接通", "接受", "answer", "accept").none { it in title }) continue
+            if (title !in answerLabels) continue
             if (action.remoteInputs?.isNotEmpty() == true) continue
             if (Build.VERSION.SDK_INT >= 31 && action.isAuthenticationRequired) continue
             val intent = action.actionIntent
-            if (intent?.creatorPackage == "com.tencent.mm") return intent
+            if (intent?.creatorPackage == "com.tencent.mm") candidates.add(intent)
         }
-        return null
+        return candidates.singleOrNull()
+    }
+
+    private fun wechatOpenAction(n: Notification): PendingIntent? =
+        listOfNotNull(n.fullScreenIntent, n.contentIntent).firstOrNull {
+            it.creatorPackage == "com.tencent.mm" && it.isActivity
+        }
+
+    private fun wechatCanAnswer(): Boolean {
+        if (wechatAnswerAttemptPending ||
+            wechatAnswerRequestedAt != 0L && SystemClock.elapsedRealtime() - wechatAnswerRequestedAt < 10_000L) return false
+        return wechatAnswerIntent != null ||
+            AmapScreenReader.isConnected() &&
+                (wechatOpenIntent != null || AmapScreenReader.hasWechatAnswerControl())
+    }
+
+    private fun sendWechatCallState() {
+        wechatLastCanAnswer = wechatCanAnswer()
+        BleLink.send("#I,2,30000,${if (wechatLastCanAnswer) 1 else 0}")
+    }
+
+    private fun wechatAnswerFailed(message: String) {
+        lastInfo = message
+        sendLabel(13, "微信接听失败")
+        sendWechatCallState()
+        val key = wechatCallKey
+        val requestedAt = wechatAnswerRequestedAt
+        val remaining = (10_050L - (SystemClock.elapsedRealtime() - requestedAt)).coerceAtLeast(0L)
+        main.postDelayed({
+            if (wechatCallKey == key && wechatAnswerRequestedAt == requestedAt &&
+                !wechatAnswerAttemptPending && wechatEnabled && wechatCallFresh() && !ringing) {
+                publishWechatCall()
+            }
+        }, remaining)
+    }
+
+    /** Accessibility events may expose the answer button after the call notification arrives. */
+    fun onWechatUiChanged() {
+        if (!wechatEnabled || wechatCallKey == null || !wechatCallFresh()) return
+        if (wechatAnswerAttemptPending && AmapScreenReader.clickWechatAnswer()) {
+            wechatAnswerAttemptPending = false
+            lastInfo = "已点击微信接听，等待来电状态更新"
+        }
+        if (ringing) return
+        val canAnswer = wechatCanAnswer()
+        if (canAnswer != wechatLastCanAnswer) sendWechatCallState()
     }
 
     /** 通知使用权授予后读取微信通知；正文只发给已配对的圆屏，不写入诊断日志。 */
@@ -284,11 +340,15 @@ object CallWatcher {
         val callHint = "$title $body"
         val callType = if (Build.VERSION.SDK_INT >= 31) n.extras?.getInt(
             Notification.EXTRA_CALL_TYPE, Notification.CallStyle.CALL_TYPE_UNKNOWN) else null
-        if (callType == Notification.CallStyle.CALL_TYPE_ONGOING) {
+        val currentCallNotice = n.category == Notification.CATEGORY_CALL || sbn.key == wechatCallKey
+        if (callType == Notification.CallStyle.CALL_TYPE_ONGOING ||
+            currentCallNotice && listOf("正在通话", "通话中", "通话已接通", "通话结束").any { it in callHint }) {
             if (wechatCallKey == sbn.key) {
                 wechatCallKey = null
                 wechatCallLabel = ""
                 wechatAnswerIntent = null
+                wechatOpenIntent = null
+                wechatAnswerAttemptPending = false
                 wechatAnswerRequestedAt = 0L
                 wechatCallPostTime = 0L
                 if (!ringing) clearNotice()
@@ -301,17 +361,26 @@ object CallWatcher {
         if (isCall) {
             main.removeCallbacks(clearWechatMessage)
             val now = SystemClock.elapsedRealtime()
-            val sameCall = wechatCallKey == sbn.key
+            // A new call can reuse WeChat's notification key. Preserve updates with the
+            // same notification when-time, and keep an in-flight answer through its cooldown.
+            val sameCall = wechatCallKey == sbn.key &&
+                (wechatCallPostTime == sbn.postTime ||
+                    n.`when` != 0L && n.`when` == wechatCallWhen ||
+                    wechatAnswerRequestedAt != 0L && now - wechatAnswerRequestedAt < 10_000L)
             if (!sameCall) {
                 wechatCallStartedAt = now
                 wechatCallPostTime = sbn.postTime
+                wechatCallWhen = n.`when`
+                wechatAnswerAttemptPending = false
                 wechatAnswerRequestedAt = 0L
-            }
+            } else if (sbn.postTime != wechatCallPostTime) wechatCallPostTime = sbn.postTime
             if (!wechatCallFresh()) {
                 if (sameCall) {
                     wechatCallKey = null
                     wechatCallLabel = ""
                     wechatAnswerIntent = null
+                    wechatOpenIntent = null
+                    wechatAnswerAttemptPending = false
                     wechatAnswerRequestedAt = 0L
                     wechatCallStartedAt = 0L
                     wechatCallPostTime = 0L
@@ -324,11 +393,13 @@ object CallWatcher {
                 else title.lineSequence().firstOrNull().orEmpty().take(32).ifBlank { "微信来电" }
             val answer = if (wechatAnswerRequestedAt != 0L && now - wechatAnswerRequestedAt < 10_000)
                 null else wechatAnswerAction(n)
-            if (sameCall && label == wechatCallLabel && answer == wechatAnswerIntent &&
+            val open = wechatOpenAction(n)
+            if (sameCall && label == wechatCallLabel && answer == wechatAnswerIntent && open == wechatOpenIntent &&
                 now - wechatCallPublishedAt < 15_000) return
             wechatCallKey = sbn.key
             wechatCallLabel = label
             wechatAnswerIntent = answer
+            wechatOpenIntent = open
             if (!ringing) publishWechatCall()
             return
         }
@@ -358,6 +429,8 @@ object CallWatcher {
         wechatCallKey = null
         wechatCallLabel = ""
         wechatAnswerIntent = null
+        wechatOpenIntent = null
+        wechatAnswerAttemptPending = false
         wechatAnswerRequestedAt = 0L
         wechatCallStartedAt = 0L
         wechatCallPostTime = 0L
@@ -369,6 +442,8 @@ object CallWatcher {
         wechatCallKey = null
         wechatCallLabel = ""
         wechatAnswerIntent = null
+        wechatOpenIntent = null
+        wechatAnswerAttemptPending = false
         wechatAnswerRequestedAt = 0L
         wechatCallStartedAt = 0L
         wechatCallPostTime = 0L
@@ -378,14 +453,14 @@ object CallWatcher {
 
     private fun publishWechatCall() {
         sendLabel(13, if (privacyMode) "来电" else wechatCallLabel)
-        BleLink.send("#I,2,30000,${if (wechatAnswerIntent != null) 1 else 0}")
+        sendWechatCallState()
         wechatCallPublishedAt = SystemClock.elapsedRealtime()
-        lastInfo = if (wechatAnswerIntent != null) "微信来电：圆屏可按住接听"
-            else "微信来电：通知无接听动作，请在手机接听"
+        lastInfo = if (wechatLastCanAnswer) "微信来电：圆屏可按住尝试接听"
+            else "微信来电：当前没有可用的接听路径，请在手机接听"
         scheduleRefresh()
     }
 
-    /** 圆屏长按发 T,A；普通电话走 Telecom，微信来电只执行该通知提供的接听动作。 */
+    /** 圆屏长按发 T,A；普通电话走 Telecom，微信来电先用通知动作，再尝试可见的微信来电页。 */
     fun onScreenTouch(p: List<String>) {
         when (p.getOrNull(1)) {
             "P" -> lastTouch = "x=${p.getOrNull(2)} y=${p.getOrNull(3)}"
@@ -415,19 +490,65 @@ object CallWatcher {
             lastInfo = "圆屏要求接听，但现在没有有效的微信来电"
             return
         }
-        val action = wechatAnswerIntent
-        if (action == null || action.creatorPackage != "com.tencent.mm") {
-            lastInfo = "当前微信通知没有可用的接听动作，请在手机接听"
+        val key = wechatCallKey ?: return
+        val requestedAt = SystemClock.elapsedRealtime()
+        if (wechatAnswerRequestedAt != 0L && requestedAt - wechatAnswerRequestedAt < 10_000L) {
+            lastInfo = "微信接听请求刚发送，请稍候或在手机接听"
             return
         }
-        wechatAnswerIntent = null
-        wechatAnswerRequestedAt = SystemClock.elapsedRealtime()
-        BleLink.send("#I,2,30000,0")
-        lastInfo = try {
-            action.send()
-            "已向微信发送接听请求，等待来电状态更新"
+        val action = wechatAnswerIntent
+        if (action?.creatorPackage == "com.tencent.mm") {
+            wechatAnswerIntent = null
+            wechatAnswerRequestedAt = requestedAt
+            sendWechatCallState()
+            lastInfo = try {
+                action.send()
+                "已向微信发送接听请求，等待来电状态更新"
+            } catch (e: Exception) {
+                wechatAnswerFailed("微信接听动作已失效：${e.message}，请在手机接听")
+                return
+            }
+            return
+        }
+        if (!AmapScreenReader.isConnected()) {
+            lastInfo = "微信通知无接听动作；请启用 MotoNav 无障碍服务后重试"
+            return
+        }
+        wechatAnswerRequestedAt = requestedAt
+        sendWechatCallState()
+        if (AmapScreenReader.clickWechatAnswer()) {
+            lastInfo = "已点击微信接听，等待来电状态更新"
+            return
+        }
+        val open = wechatOpenIntent
+        if (open == null) {
+            wechatAnswerFailed("微信来电页未显示明确接听控件，通知也没有可打开的来电入口")
+            return
+        }
+        wechatAnswerAttemptPending = true
+        try {
+            val options = if (Build.VERSION.SDK_INT >= 34) ActivityOptions.makeBasic().apply {
+                pendingIntentBackgroundActivityStartMode = ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+            }.toBundle() else null
+            open.send(c, 0, null, null, null, null, options)
+            lastInfo = "已请求打开微信来电页，正在寻找接听控件"
         } catch (e: Exception) {
-            "微信接听动作已失效：${e.message}，请在手机接听"
+            wechatAnswerAttemptPending = false
+            wechatAnswerFailed("微信来电页无法打开：${e.message}，请在手机接听")
+            return
+        }
+        for (delay in listOf(300L, 800L, 1_500L, 2_500L, 4_000L)) {
+            main.postDelayed({
+                if (!wechatAnswerAttemptPending || wechatCallKey != key ||
+                    wechatAnswerRequestedAt != requestedAt || !wechatCallFresh()) return@postDelayed
+                if (AmapScreenReader.clickWechatAnswer()) {
+                    wechatAnswerAttemptPending = false
+                    lastInfo = "已点击微信接听，等待来电状态更新"
+                } else if (delay == 4_000L) {
+                    wechatAnswerAttemptPending = false
+                    wechatAnswerFailed("微信来电页未提供明确可点击的接听控件，请在手机接听")
+                }
+            }, delay)
         }
     }
 

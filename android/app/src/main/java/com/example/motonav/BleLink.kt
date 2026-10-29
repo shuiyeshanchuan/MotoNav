@@ -884,6 +884,12 @@ object BleLink {
                 lastImg.clear()
                 queue.removeAll { it.key != null && it.key.startsWith("B") }
             }
+            if (msg == "#P0") {
+                // 新导航先清掉上次行程的位置。重新入队的第一条 #p 必须排在 #P0 后面，
+                // 重连补发时也不能先回放旧位置，再清掉新位置。
+                lastState.remove("#p")
+                queue.removeAll { it.key == "#p" }
+            }
             if (k != "P" && k != "#GB?" && k != "#INFO?" && k != "#OTA?" && k != "#BLE?" && k != "#OTA") lastState[k] = msg
             enqueue(k, msg.toByteArray(Charsets.UTF_8))
         }

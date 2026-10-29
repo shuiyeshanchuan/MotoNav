@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import com.amap.api.location.AMapLocationClient
+import com.amap.api.location.AMapLocationClientOption
 import com.amap.api.maps.MapsInitializer
 import com.amap.api.navi.AMapNavi
 import com.amap.api.navi.AMapNaviListener
@@ -123,6 +124,9 @@ object NaviBridge {
     private var lastSent = ""
     private var navi: AMapNavi? = null
     private var listener: AMapNaviListener? = null
+    private var cruiseLocation: AMapLocationClient? = null
+    private var lastSdkLocationAt = 0L
+    private var lastCruiseFixStamp = 0L
 
     private val handler = Handler(Looper.getMainLooper())
     private const val TICK_MS = 100L          // 推算频率：每秒 10 次（v7.2 原来 5 次，数字倒数更顺）
@@ -366,7 +370,8 @@ object NaviBridge {
         uiRemainM = 0; uiRemainS = 0; uiLights = 0; uiCamLimit = 0; uiCamDist = 0
         uiLanes = IntArray(0); uiArrived = false; uiHasInfo = false; uiLastInfoAt = 0L
         lastTripMsg = ""; lastLightMsg = ""; lightBase = -1; lightAt = 0L; uiLightDist = -1
-        rerouting = false; gpsWeakSent = false; lastTrafficMsg = ""; lastTrafficAt = 0L    // v4.9
+        rerouting = false; gpsWeakSent = false; gpsWeakSdk = false; gpsWeakFix = false
+        lastTrafficMsg = ""; lastTrafficAt = 0L    // v4.9
         suggestNewId = null; uiSuggestMin = 0
         lastCamMapMsg = ""
         navCamPts = emptyList(); cruiseCamPts = emptyList(); facPts.clear()      // v4.7
@@ -452,7 +457,7 @@ object NaviBridge {
                 if (pk != observedRouteKey) {
                     observedRouteKey = pk
                     uiRoutePlannedAt = System.currentTimeMillis()
-                    if (!rerouting) uiRouteState = if (gpsWeakSent) "GPS 信号弱，沿用当前路线" else "导航中"
+                    if (!rerouting) uiRouteState = if (gpsWeakSent) "GPS 信号弱，位置仅供参考" else "导航中"
                 }
                 if (pk != lastRouteKey) {
                     try {
@@ -709,6 +714,10 @@ object NaviBridge {
                 if (active && reliable) addTrip(c.latitude, c.longitude, kmh)    // v7.9
                 ShareGuide.onLocation(c.latitude, c.longitude)                    // v4.5
                 MapFeeder.onLocation(c.latitude, c.longitude, loc.bearing, kmh.coerceAtLeast(0), loc.accuracy)   // v2.0 小地图
+                setGpsWeakFix(!reliable)
+                if (cruising && reliable && c.latitude.isFinite() && c.longitude.isFinite() &&
+                    c.latitude in -90.0..90.0 && c.longitude in -180.0..180.0 &&
+                    (c.latitude != 0.0 || c.longitude != 0.0)) lastSdkLocationAt = receivedAt
             }
             val m = "#v,$kmh"
             if (m != lastSpeedMsg) {
@@ -958,6 +967,8 @@ object NaviBridge {
 
     private var rerouting = false
     private var gpsWeakSent = false
+    private var gpsWeakSdk = false
+    private var gpsWeakFix = false
     private var lastTrafficMsg = ""
     private var lastTrafficAt = 0L
     private var suggestNewId: Any? = null              // 高德建议的更快路线编号（Long 或 Int）
@@ -981,10 +992,21 @@ object NaviBridge {
     }
 
     private fun setGpsWeak(w: Boolean) {
+        gpsWeakSdk = w
+        publishGpsWeak()
+    }
+
+    private fun setGpsWeakFix(w: Boolean) {
+        gpsWeakFix = w
+        publishGpsWeak()
+    }
+
+    private fun publishGpsWeak() {
+        val w = gpsWeakSdk || gpsWeakFix
         if (w == gpsWeakSent) return
         gpsWeakSent = w
         BleLink.send(if (w) "#x,1" else "#x,0")
-        if (!rerouting && active) uiRouteState = if (w) "GPS 信号弱，沿用当前路线" else "导航中"
+        if (!rerouting && active) uiRouteState = if (w) "GPS 信号弱，位置仅供参考" else "导航中"
         sendRouteMeta()
         extraInfo = if (w) "GPS 信号弱" else "GPS 信号恢复"
     }
@@ -1114,6 +1136,9 @@ object NaviBridge {
         cruiseRaw = "巡航已开始，等高德发来数据…"
         lastInfo = "巡航中"
         BleLink.send("#z,1")
+        // AimlessMode reports cameras on some SDK builds without forwarding
+        // onLocationChange. Keep an independent position source for the map.
+        startCruiseMapLocation(context)
         handler.removeCallbacks(cruiseTick)
         handler.postDelayed(cruiseTick, 300)
         return null
@@ -1133,6 +1158,7 @@ object NaviBridge {
         if (!cruising) return
         arrivalSession.cancel(arrivalSession.generation())
         cruising = false
+        stopCruiseMapLocation()
         RideRecorder.stop()
         cruiseIdle.stop()
         handler.removeCallbacks(cruiseTick)
@@ -1140,6 +1166,57 @@ object NaviBridge {
         aimlessListener?.let { Refl.call(navi, "removeAimlessModeListener", it) }
         aimlessListener = null
         BleLink.send("#z,0")
+    }
+
+    private fun startCruiseMapLocation(context: Context) {
+        stopCruiseMapLocation()
+        try {
+            val client = AMapLocationClient(context.applicationContext)
+            client.setLocationOption(AMapLocationClientOption().apply {
+                locationMode = AMapLocationClientOption.AMapLocationMode.Hight_Accuracy
+                interval = 1000L
+                isNeedAddress = false
+                isLocationCacheEnable = false
+                isOffset = true
+            })
+            client.setLocationListener { fix -> handler.post {
+                if (!cruising || cruiseLocation !== client || fix == null || fix.errorCode != 0) return@post
+                val age = System.currentTimeMillis() - fix.time
+                if (fix.time <= lastCruiseFixStamp || age !in -2000..15000 ||
+                    !fix.coordType.equals("GCJ02", true)) return@post
+                lastCruiseFixStamp = fix.time
+                // Prefer the navigation SDK's own pose while it is fresh.
+                if (now() - lastSdkLocationAt < 2500) return@post
+                val lat = fix.latitude
+                val lng = fix.longitude
+                if (!lat.isFinite() || !lng.isFinite() || lat !in -90.0..90.0 ||
+                    lng !in -180.0..180.0 || (lat == 0.0 && lng == 0.0)) return@post
+                val accurate = fix.accuracy.isFinite() && fix.accuracy in 0f..50f
+                val kmh = if (accurate) (fix.speed * 3.6f).roundToInt().coerceAtLeast(0) else -1
+                MapFeeder.onLocation(lat, lng, fix.bearing, kmh.coerceAtLeast(0), fix.accuracy)
+                setGpsWeakFix(!accurate)
+                speedKmhNow = kmh.coerceAtLeast(0)
+                uiSpeed = kmh
+                val speedMsg = "#v,$kmh"
+                if (speedMsg != lastSpeedMsg) { lastSpeedMsg = speedMsg; BleLink.send(speedMsg) }
+                Brightness.updateLocation(lat, lng)
+                cruiseIdle.onFix(now(), fix.time, fix.speed.toDouble(), lat, lng, fix.accuracy.toDouble())
+                RideRecorder.onFix(lat, lng, fix.time, System.currentTimeMillis(),
+                    fix.accuracy.toDouble(), fix.speed.toDouble())
+            } }
+            cruiseLocation = client
+            client.startLocation()
+        } catch (e: Exception) {
+            stopCruiseMapLocation()
+            extraInfo = "巡航独立定位未启动：${e.message}"
+        }
+    }
+
+    private fun stopCruiseMapLocation() {
+        runCatching { cruiseLocation?.stopLocation(); cruiseLocation?.onDestroy() }
+        cruiseLocation = null
+        lastSdkLocationAt = 0L
+        lastCruiseFixStamp = 0L
     }
 
     private fun isCruiseCallback(name: String): Boolean {

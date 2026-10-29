@@ -272,7 +272,10 @@ void loop() {
   bool mapNow = inNav && mapModeActive();
   if (mapNow != wasMap) { wasMap = mapNow; navDirty = true; }   // 进出地图模式时整帧重画
   if (mapNow) navDirty = true;
-  if (mapWaitAt && !mapWaitExpired && !mapNow && millis() - mapWaitAt >= 2500) navDirty = true;
+  if (mapWaitAt && !mapWaitExpired && !mapNow &&
+      millis() - mapWaitAt >= (cruiseOn ? CRUISE_MAP_WAIT_MS : NAV_MAP_WAIT_MS)) navDirty = true;
+  if (mapWaitAt && mapWaitExpired && !mapNow && !mapUnavailableShown &&
+      millis() - mapWaitAt >= CRUISE_MAP_WAIT_MS) { mapUnavailableShown = true; navDirty = true; }
 
   touchPoll();                                         // v5.2 按住接听 / v5.3 滑动换页
   batPoll();                                           // v6.8 电量

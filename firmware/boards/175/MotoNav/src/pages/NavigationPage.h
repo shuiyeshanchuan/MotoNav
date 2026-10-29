@@ -6,6 +6,9 @@ uint32_t ringAnimationDrawAt = 0;
 uint32_t arrowAnimationAt = 0;
 unsigned long mapWaitAt = 0;
 bool mapWaitExpired = false;
+bool mapUnavailableShown = false;
+#define NAV_MAP_WAIT_MS 2500UL
+#define CRUISE_MAP_WAIT_MS 15000UL
 void updateRingTarget() {
   bool hasRing = (navDir != "S") && navDist <= STAGE_FAR_M;
   float target = hasRing ? (float)(STAGE_FAR_M - navDist) / STAGE_FAR_M : 0;
@@ -37,25 +40,27 @@ void animateRing() {
 void drawNavFrame() {
   onWaitScreen = false;                                 // v3.6 离开首页，猫猫不再动
   if (mapModeActive()) {
-    mapWaitAt = 0; mapWaitExpired = false;
+    mapWaitAt = 0; mapWaitExpired = false; mapUnavailableShown = false;
     drawMapFrame(); return;
   }
   // After a fresh connection, navigation text can arrive before the map block.
-  // Show a short loading state instead of flashing the arrow page for one second.
-  if (mapOn && !cruiseOn && styleIdx() != ST_DRAGON && !mapWaitExpired) {
+  // Give map capture and BLE transfer time before showing the fallback page.
+  if (mapOn && styleIdx() != ST_DRAGON && !mapWaitExpired) {
     if (!mapWaitAt) mapWaitAt = millis();
-    if (millis() - mapWaitAt < 2500) {
+    if (millis() - mapWaitAt < (cruiseOn ? CRUISE_MAP_WAIT_MS : NAV_MAP_WAIT_MS)) {
       frameIsMap = false;
       gfx->fillScreen(C_BLACK);
       drawStatus();
       printCentered("LOADING MAP", CX, 205, 3, C_CYAN);
-      printCentered(distText(navDist), CX, 262, 4, C_WHITE);
+      if (cruiseOn) printCentered("CRUISE", CX, 262, 4, C_WHITE);
+      else printCentered(distText(navDist), CX, 262, 4, C_WHITE);
+      if (gpsWeak) printCentered(posAt ? "POSITION APPROX" : "WAIT GPS", CX, 326, 2, C_ORANGE);
       needFlush = true;
       return;
     }
-    mapWaitExpired = true; // Keep the turn arrow as a fallback if the map cannot load.
+    mapWaitExpired = true; // Keep turn instructions visible while the map is still loading.
   }
-  if (!mapOn || cruiseOn) { mapWaitAt = 0; mapWaitExpired = false; }
+  if (!mapOn) { mapWaitAt = 0; mapWaitExpired = false; mapUnavailableShown = false; }
   viewInit = false;
   if (cruiseOn) {                                       // v4.8 巡航但还没有地图：只显示车速和测速
     gfx->fillScreen(C_BLACK);
@@ -64,6 +69,8 @@ void drawNavFrame() {
     drawStatus();
     drawSpeedBlock(over);
     printCentered("CRUISE", CX, 300, 4, C_CYAN);
+    printCentered(!mapOn ? "MAP OFF" : !posAt ? "WAIT GPS" : "MAP UNAVAILABLE",
+                  CX, 350, 2, C_ORANGE);
     needFlush = true;
     return;
   }
@@ -112,5 +119,8 @@ void drawNavFrame() {
   drawTextImg(1, BOTTOM_Y, navLightMode == 2 || navFocus == 5 ? 0xDD : 0x99);
   drawNavHints(128);                                    // v5.0
   drawRouteMeta(402);
+  if (mapOn && styleIdx() != ST_DRAGON)
+    printCentered(!posAt ? "WAIT GPS" : mapUnavailableShown ? "MAP UNAVAILABLE" : "MAP LOADING",
+                  CX, 427, 1, C_ORANGE);
   needFlush = true;
 }

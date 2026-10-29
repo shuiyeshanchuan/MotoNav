@@ -1,10 +1,17 @@
 #pragma once
 // 地图模式判断、抗锯齿线条和多边形。由 MotoNav.ino 按依赖顺序包含，仅编译一次。
 // 现在是否显示小地图
+bool rasterCoversPose() {
+  if (!rasterValid || rasMpp <= 0 || rasW <= 0 || rasH <= 0) return false;
+  const float right = rasX0 + rasW * rasMpp;
+  const float bottom = rasY0 - rasH * rasMpp;
+  return posX >= rasX0 && posX <= right && posY >= bottom && posY <= rasY0;
+}
+
 bool mapModeActive() {
   if (!mapOn || !inNav) return false;
   bool vecOK = mapValid && mapFrame == posFrame;
-  bool rasOK = rasterValid && rasterFrame == posFrame;      // v2.5
+  bool rasOK = rasterFrame == posFrame && rasterCoversPose();      // v2.5
   // v4.0 停车或暂停时手机可能不再发位置：不再 5 秒后切回箭头画面，保持地图（位置停在最后一次）
   if (!(styleIdx() == ST_DRAGON || vecOK || rasOK) || posAt == 0) return false;
   return true;                                      // v2.1 一直显示地图，路口信息放大显示在圆牌里

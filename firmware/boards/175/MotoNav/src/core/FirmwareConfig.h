@@ -1,6 +1,6 @@
 #pragma once
 // 版本、诊断选项及路口灯状态，保持原先位于 Arduino.h 之前的顺序。
-#define FW_VERSION "v7.12.9-nav.4"
+#define FW_VERSION "v7.12.9-nav.5"
 #define MOTONAV_PROTOCOL_VERSION 1
 #if defined(MOTONAV_175C)
 #define MOTONAV_BOARD_ID "175C"

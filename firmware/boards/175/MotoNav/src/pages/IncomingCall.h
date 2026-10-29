@@ -14,6 +14,7 @@ bool noticeCanAnswer = false;
 
 // v5.2 触屏接电话：按住任意位置 HOLD_MS 毫秒 → 发 "T,A" 给手机（v6.9 800 → 200）
 #define HOLD_MS 200
+#define WECHAT_HOLD_MS 500
 TouchDrvCST92xx touch;
 bool touchOK = false;
 unsigned long touchHoldAt = 0, touchLastSeen = 0;
@@ -220,7 +221,7 @@ void touchPoll() {
       islandX >= 94 && islandX < 386 && islandY >= 49 && islandY < 155;
   const int oldHoldWidth = (int)(touchHold * 160);
   touchHold = ((callOn || wechatAnswer) && n > 0 && touchDown && still) ?
-      min(1.0f, (now - touchHoldAt) / (float)HOLD_MS) : 0;
+      min(1.0f, (now - touchHoldAt) / (float)(callOn ? HOLD_MS : WECHAT_HOLD_MS)) : 0;
   if (wechatAnswer && oldHoldWidth != (int)(touchHold * 160)) noticeDirty = true;
   if (touchHold >= 1 && !callAnswerSent) {
     callAnswerSent = true;
@@ -338,7 +339,7 @@ void drawNotificationIsland() {
   else printCentered(noticeKind == 1 ? "INCOMING CALL" : isCall ? "INCOMING CALL" : "NEW MESSAGE",
                      CX, 92, 2, C_WHITE);
   if (isCall) {
-    printCentered(callAnswerSent ? "ANSWERING..." : noticeCanAnswer ? "HOLD ISLAND TO ANSWER" : "ANSWER ON PHONE",
+    printCentered(callAnswerSent ? "TRYING..." : noticeCanAnswer ? "HOLD TO TRY ANSWER" : "ANSWER ON PHONE",
                   CX, 134, 1, callAnswerSent || noticeCanAnswer ? C_GREEN : C_GREY);
     if (noticeCanAnswer && !callAnswerSent && touchHold > 0) {
       gfx->fillRoundRect(153, 147, constrain((int)(touchHold * 160), 0, 160), 4, 2, C_GREEN);
