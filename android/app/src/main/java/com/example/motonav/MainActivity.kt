@@ -1642,6 +1642,40 @@ class MainActivity : AppCompatActivity() {
         card.addView(note("越快画面撕裂越轻；花屏就切回 40。切换后圆屏会自动重启"))
         card.addView(settingRow("快速刷屏", "提高帧率；花屏时关掉（圆屏会自动重启）",
             toggle({ BleLink.screenFast != 0 }) { BleLink.send(if (it) "#f,1" else "#f,0") }))
+        card.addView(subhead("QMI8658 事故传感器诊断", top = 14))
+        card.addView(note("仅读取圆屏 IMU 的诊断样本，默认关闭；不会启动事故判定、通知联系人、短信或拨号。请停车后再开启。"))
+        card.addView(settingRow("BLE IMU 诊断采样", "打开后以低频发送加速度和陀螺仪样本",
+            toggle({ BleLink.screenImuStreamEnabled }) { BleLink.setImuDiagnosticsStream(it) }))
+        val imuButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        imuButtons.addView(pillButton("读取 IMU 状态", STROKE) { BleLink.requestImuDiagnosticsStatus() },
+            LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(8) })
+        imuButtons.addView(pillButton("关闭采样", STROKE) { BleLink.setImuDiagnosticsStream(false) },
+            LinearLayout.LayoutParams(0, dp(46), 1f))
+        card.addView(imuButtons)
+        val imuInfo = label("", 12f, SUB).apply { setLineSpacing(0f, 1.15f); setTextIsSelectable(true) }
+        card.addView(imuInfo)
+        refreshers += {
+            val address = if (BleLink.screenImuAddress < 0) "未知" else "0x%02X".format(BleLink.screenImuAddress)
+            val selfTest = when {
+                !BleLink.screenImuSelfTestKnown -> "未完成"
+                BleLink.screenImuSelfTestOk -> "通过"
+                else -> "失败"
+            }
+            val sample = BleLink.screenImuSample
+            val sampleText = if (sample == null) "暂无样本" else
+                "最近样本：板端 ${sample.boardMillis} ms，接收 ${sample.receivedAtMonotonicMs} ms，" +
+                    "加速度 %.2f m/s²，角速度 %.1f °/s，温度 %.1f°C".format(
+                        sample.accelerationMagnitudeMps2(), sample.gyroMagnitudeDegPerSec(), sample.temperatureC)
+            imuInfo.text = "地址 $address · 存在 ${if (BleLink.screenImuPresent) "是" else "否"} · " +
+                "自检 $selfTest · 配置 ${if (BleLink.screenImuConfigured) "完成" else "未完成"} · " +
+                "采样 ${if (BleLink.screenImuStreamEnabled) "开启" else "关闭"} · " +
+                "累计 ${BleLink.screenImuSampleCount} · 读错 ${if (BleLink.screenImuReadErrors < 0) "未知" else BleLink.screenImuReadErrors}\n" +
+                sampleText +
+                (if (BleLink.screenImuStatus.isNotEmpty()) "\n原始状态：${BleLink.screenImuStatus}" else "")
+        }
         card.addView(divider(top = 8))
         val testRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(12), 0, dp(10)) }
         testRow.addView(pillButton("测试：左转 160 米", STROKE) { BleLink.send("L,160") }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
@@ -1653,7 +1687,7 @@ class MainActivity : AppCompatActivity() {
         card.addView(pillButton("用高德原版界面导航", STROKE) { NaviBridge.startNaviComponent(this@MainActivity) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { bottomMargin = dp(10) })
         card.addView(subhead("圆屏 OTA 升级", top = 14))
-        card.addView(note("仅选择 1.75C 构建产物中的 manifest 和 *_app_0x10000.bin；完整 *_full_0x0.bin 只用于 USB 救援。升级前请停车、接入稳定电源，并保持手机与圆屏靠近。"))
+        card.addView(note("仅选择 1.75C 构建产物中的 manifest 和 *_app_0x10000.bin；完整 *_full_0x0.bin 只用于 USB 救援。文件名带 -imu-diagnostic 的包只用于停车诊断采样，不能当稳定包使用。升级前请停车、接入稳定电源，并保持手机与圆屏靠近。"))
         card.addView(pillButton("选择 OTA manifest", STROKE) {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "application/json"
@@ -1679,6 +1713,7 @@ class MainActivity : AppCompatActivity() {
                     "Key：${Keys.applyInfo}\n" +
                     "圆屏：${BleLink.statsText()}\n${BleLink.screenStats}\n" +
                     "设备：${BleLink.screenInfo}\n自检：${BleLink.screenSelfTest}\nBLE：${BleLink.screenBleStats}\n" +
+                    "IMU：${BleLink.screenImuStatus}（样本 ${BleLink.screenImuSampleCount}）\n" +
                     "电源：${BleLink.screenBattery}，温度 ${if (BleLink.screenPmuTempC10 < 0) "未知" else "%.1f°C".format(BleLink.screenPmuTempC10 / 10f)}，OTA 电源条件 ${if (BleLink.screenOtaPower) "满足" else "不满足"}\n" +
                     (if (BleLink.screenProf.isNotEmpty()) "${BleLink.screenProf}\n" else "") + "\n" +
                     "小地图：${MapFeeder.infoText()}\n\n" +

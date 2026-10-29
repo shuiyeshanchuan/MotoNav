@@ -1,7 +1,8 @@
 param(
     [ValidateSet('Check','Android','Firmware','All')]
     [string]$Task = 'Check',
-    [switch]$Offline
+    [switch]$Offline,
+    [switch]$ImuDiagnostics
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +62,10 @@ if ($Task -in @('Android','All')) {
 if ($Task -in @('Firmware','All')) {
     $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
     if (-not $pwsh) { throw 'PowerShell 7 (pwsh) is required to sign firmware OTA manifests.' }
-    & $pwsh.Source -NoProfile -File (Join-Path $root 'firmware\build.ps1') -Board 175c -CliPath $arduinoCli -ConfigFile $arduinoConfig -OtaPrivateKey $otaPrivateKey
+    # A single Arduino compile worker keeps the local build deterministic on
+    # this machine and avoids concurrent use of .build/175c by two invocations.
+    $firmwareArgs = @('-Board','175c','-Jobs','1','-CliPath',$arduinoCli,'-ConfigFile',$arduinoConfig,'-OtaPrivateKey',$otaPrivateKey)
+    if ($ImuDiagnostics) { $firmwareArgs += '-ImuDiagnostics' }
+    & $pwsh.Source -NoProfile -File (Join-Path $root 'firmware\build.ps1') @firmwareArgs
     if ($LASTEXITCODE -ne 0) { throw "Firmware build failed ($LASTEXITCODE)" }
 }

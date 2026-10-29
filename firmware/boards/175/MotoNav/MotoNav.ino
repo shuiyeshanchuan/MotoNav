@@ -42,6 +42,7 @@
 #include "src/connectivity/DeviceName.h"
 #include "src/diagnostics/RenderBenchmarks.h"
 #include "src/diagnostics/DeviceDiagnostics.h"
+#include "src/diagnostics/ImuDiagnostics.h"
 
 // 初始化：硬件、画布、持久化设置及蓝牙服务。
 void setup() {
@@ -57,6 +58,7 @@ void setup() {
   deviceTouchOK = touchOK;
   batInit();                                           // v6.8 电源芯片（电量）
   devicePmuOK = pmuOK;
+  initImuDiagnostics();                                // opt-in QMI8658 probe/sample only
 
   // v2.3 读取保存的屏幕数据线速度（默认 40MHz，和官方示例一样）
   {
@@ -256,6 +258,7 @@ void loop() {
   updateStats();
   if (pendingStat.length()) { pendingStat2 = pendingStat; pendingStat = ""; }
   sendPendingAck();                                    // v2.0 地图收齐的确认 / v2.2 帧率
+  imuDiagnosticsNotifyTick();                         // opt-in #IMU,1 stream only
 
   // 3. 进度环动画；小地图模式下连续刷新（v2.2 不再限制帧间隔）
   animateRing();
@@ -279,6 +282,7 @@ void loop() {
 
   touchPoll();                                         // v5.2 按住接听 / v5.3 滑动换页
   batPoll();                                           // v6.8 电量
+  imuDiagnosticsTick();                                // opt-in serial-only IMU diagnostics
   // 4. 需要时重画导航画面
   // v6.5 配对：整屏显示配对码，配好 / 失败 / 60 秒 / 断开后回到原来的画面
   if (pairReq) {

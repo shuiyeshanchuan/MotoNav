@@ -37,6 +37,11 @@ int hexVal(char c) {
 // 处理文字类消息
 void handleText(const String &m) {
   if (m.startsWith("#OTA,")) { otaHandleControl(m); return; }
+  // Opt-in diagnostics only. The normal build implements these functions as
+  // no-ops; #IMU never changes navigation state or starts BLE traffic there.
+  if (m == "#IMU,1") { setImuDiagnosticsStream(true); return; }
+  if (m == "#IMU,0") { setImuDiagnosticsStream(false); return; }
+  if (m == "#IMU?") { requestImuDiagnosticsStatus(); return; }
   if(m.startsWith("#TLA,")) {
     const int previous=trafficLightFrame.key;
     const bool accepted=trafficLightFrame.receive(m.c_str(),millis());

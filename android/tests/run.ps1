@@ -9,6 +9,17 @@ if($LASTEXITCODE -ne 0){throw 'Test compile failed'}
 & $taskJava -cp $taskClasses com.example.motonav.CruiseIdleTimerTest
 if($LASTEXITCODE -ne 0){throw 'Tests failed'}
 
+& $taskJavac -encoding UTF-8 -d $taskClasses `
+    (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/AccidentSafetyModel.java') `
+    (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/AccidentImuSampleParser.java') `
+    (Join-Path $PSScriptRoot 'AccidentSafetyModelTest.java') `
+    (Join-Path $PSScriptRoot 'AccidentImuSampleParserTest.java')
+if($LASTEXITCODE -ne 0){throw 'Accident safety model compile failed'}
+& $taskJava -cp $taskClasses com.example.motonav.AccidentSafetyModelTest
+if($LASTEXITCODE -ne 0){throw 'Accident safety model tests failed'}
+& $taskJava -cp $taskClasses com.example.motonav.AccidentImuSampleParserTest
+if($LASTEXITCODE -ne 0){throw 'Accident IMU parser tests failed'}
+
 & $taskJavac -encoding UTF-8 -d $taskClasses (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/MapStylePolicy.java') (Join-Path $PSScriptRoot 'MapStylePolicyTest.java')
 if($LASTEXITCODE -ne 0){throw 'Style test compile failed'}
 & $taskJava -cp $taskClasses com.example.motonav.MapStylePolicyTest

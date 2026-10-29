@@ -2,6 +2,7 @@ param([ValidateSet('175','175c','185b')][string]$Board='175',
       [ValidateSet(0,1,2)][int]$PanelVariant=0,
       [string]$CliPath='arduino-cli',[string]$ConfigFile='',
       [ValidateRange(1,32)][int]$Jobs=4,
+      [switch]$ImuDiagnostics,
       [string]$OtaPrivateKey='')
 $ErrorActionPreference='Stop'
 if($Board -eq '175' -and $PanelVariant -ne 0){throw '1.75 has only panel 0.'}
@@ -35,6 +36,7 @@ $taskFqbn=if($Board -eq '175c'){
 }
 $taskExtraFlags=$taskPrefixMap
 if($Board -eq '175c'){$taskExtraFlags+=' -DMOTONAV_175C=1'}
+if($ImuDiagnostics){$taskExtraFlags+=' -DMOTONAV_IMU_DIAGNOSTICS=1'}
 $taskArgs+=@('compile','--jobs',"$Jobs",'--libraries',(Join-Path $taskRoot 'libraries'),
     '--build-path',(Join-Path $taskBuild 'build'),
     '--fqbn',$taskFqbn,
@@ -50,7 +52,8 @@ $taskVersionSource=Join-Path $taskSketch 'src/core/FirmwareConfig.h'
 if(!(Test-Path -LiteralPath $taskVersionSource)){$taskVersionSource=Join-Path $taskSketch 'MotoNav.ino'}
 $taskVersion=[regex]::Match([IO.File]::ReadAllText($taskVersionSource),'^#define FW_VERSION "v([^\"]+)"',[Text.RegularExpressions.RegexOptions]::Multiline).Groups[1].Value
 if(!$taskVersion){throw 'Cannot read firmware version'}
-$taskName="MotoNav_universal_${taskLabel}_v${taskVersion}_panel$PanelVariant"
+$taskDiagnosticSuffix = if($ImuDiagnostics){'-imu-diagnostic'}else{''}
+$taskName="MotoNav_universal_${taskLabel}_v${taskVersion}_panel$PanelVariant$taskDiagnosticSuffix"
 $taskApp=[IO.File]::ReadAllBytes((Join-Path $taskOutput 'MotoNav.ino.bin'))
 $taskMerged=[IO.File]::ReadAllBytes((Join-Path $taskOutput 'MotoNav.ino.merged.bin'))
 $taskLength=0x10000+$taskApp.Length
@@ -78,7 +81,7 @@ if($Board -in @('175','175c')) {
     $taskManifestFlash=if($Board -eq '175c'){'32MB'}else{'16MB'}
     $taskManifestPartition=if($Board -eq '175c'){'app5M_fat24M_32MB'}else{'app3M_fat9M_16MB'}
     $taskManifestBoard=if($Board -eq '175c'){'Waveshare ESP32-S3-Touch-AMOLED-1.75C'}else{'Waveshare ESP32-S3-Touch-AMOLED-1.75'}
-    $taskManifest=@{firmware=$taskVersion;platform='universal';board=$taskManifestBoard;esp32Core='3.3.10';flashSize=$taskManifestFlash;partition=$taskManifestPartition;verifiedApplicationOffset='0x10000';deviceTested=$false;files=$taskManifestFiles}
+    $taskManifest=@{firmware=$taskVersion;platform='universal';board=$taskManifestBoard;esp32Core='3.3.10';flashSize=$taskManifestFlash;partition=$taskManifestPartition;verifiedApplicationOffset='0x10000';deviceTested=$false;diagnostic=[bool]$ImuDiagnostics;files=$taskManifestFiles}
     $taskManifestPath=Join-Path $taskDest "${taskName}_manifest.json"
     [IO.File]::WriteAllText($taskManifestPath,($taskManifest | ConvertTo-Json -Depth 5),[Text.UTF8Encoding]::new($false))
     if($OtaPrivateKey) {

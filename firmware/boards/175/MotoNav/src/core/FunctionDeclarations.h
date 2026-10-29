@@ -214,6 +214,13 @@ void queueDeviceInfo();
 void queueDeviceSelfTest();
 void queueOtaStatus();
 void queueBleStatus();
+// Optional QMI8658 diagnostic build. The normal image implements these as
+// no-ops, so #IMU commands never change navigation behavior or BLE traffic.
+void initImuDiagnostics();
+void imuDiagnosticsTick();
+void imuDiagnosticsNotifyTick();
+void setImuDiagnosticsStream(bool enabled);
+void requestImuDiagnosticsStatus();
 void setup();
 void idlePowerOffShutdown();
 void drawTrafficLightLab(uint32_t now);

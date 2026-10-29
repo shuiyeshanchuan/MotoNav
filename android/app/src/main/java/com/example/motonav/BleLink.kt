@@ -107,6 +107,16 @@ object BleLink {
         ready = false; verified = false; buildingsSupported = false
         capabilityQuerySent = false; rxChar = null; otaRxChar = null; otaTxChar = null; mtu = 23
         phyText = "?"; burstStart = 0L
+        screenImuStatus = ""
+        screenImuSample = null
+        screenImuSampleCount = 0L
+        screenImuAddress = -1
+        screenImuPresent = false
+        screenImuSelfTestKnown = false
+        screenImuSelfTestOk = false
+        screenImuConfigured = false
+        screenImuStreamEnabled = false
+        screenImuReadErrors = -1L
         synchronized(lock) { writing = false; queue.clear(); bulkQ.clear() }
         try { old?.disconnect() } catch (_: Exception) {}
         try { old?.close() } catch (_: Exception) {}
@@ -158,6 +168,29 @@ object BleLink {
     @Volatile var screenFps = ""                      // v2.6 给新界面用：帧率、屏幕速度、快速刷屏
     @Volatile var screenMhz = -1
     @Volatile var screenFast = -1
+    // Opt-in QMI8658 diagnostic stream. These values are evidence for a
+    // later, separately reviewed safety monitor; they never trigger an alert.
+    @Volatile var screenImuStatus = ""
+    @Volatile var screenImuSample: AccidentImuSampleParser.Sample? = null
+    @Volatile var screenImuSampleCount = 0L
+    @Volatile var screenImuAddress = -1
+    @Volatile var screenImuPresent = false
+    @Volatile var screenImuSelfTestKnown = false
+    @Volatile var screenImuSelfTestOk = false
+    @Volatile var screenImuConfigured = false
+    @Volatile var screenImuStreamEnabled = false
+    @Volatile var screenImuReadErrors = -1L
+
+    interface ImuListener {
+        fun onImuStatus(status: AccidentImuSampleParser.Status)
+        fun onImuSample(sample: AccidentImuSampleParser.Sample)
+    }
+
+    @Volatile private var imuListener: ImuListener? = null
+
+    fun setImuListener(listener: ImuListener?) {
+        imuListener = listener
+    }
     private var writing = false
     private var writeStartedAt = 0L
     private var lastWriteAt = 0L
@@ -433,6 +466,29 @@ object BleLink {
     private fun onNotify(bytes: ByteArray?) {
         val msg = bytes?.toString(Charsets.UTF_8)?.trim() ?: return
         if (BleSession.confirms(msg, capabilityQuerySent)) markVerified()
+        // Diagnostic frames are opt-in firmware output. Keep them out of the
+        // normal protocol handlers and expose them only as raw evidence.
+        when (val imu = AccidentImuSampleParser.parse(msg, now())) {
+            is AccidentImuSampleParser.Status -> {
+                screenImuStatus = msg
+                screenImuAddress = imu.address
+                screenImuPresent = imu.present
+                screenImuSelfTestKnown = imu.selfTestKnown
+                screenImuSelfTestOk = imu.selfTestOk
+                screenImuConfigured = imu.configured
+                screenImuStreamEnabled = imu.streamEnabled
+                screenImuReadErrors = imu.readErrors
+                imuListener?.let { listener -> runCatching { listener.onImuStatus(imu) } }
+                return
+            }
+            is AccidentImuSampleParser.Sample -> {
+                screenImuSample = imu
+                screenImuSampleCount += 1L
+                imuListener?.let { listener -> runCatching { listener.onImuSample(imu) } }
+                return
+            }
+            null -> Unit
+        }
         if (msg.startsWith("OC,")) {
             val capabilities = msg.split(',')
             screenProtocol = capabilities.getOrNull(1)?.toIntOrNull() ?: -1
@@ -890,10 +946,26 @@ object BleLink {
                 lastState.remove("#p")
                 queue.removeAll { it.key == "#p" }
             }
-            if (k != "P" && k != "#GB?" && k != "#INFO?" && k != "#OTA?" && k != "#BLE?" && k != "#OTA") lastState[k] = msg
+            // IMU diagnostics are an explicit, temporary sampling session. Do
+            // not replay a status query or re-enable the stream after a BLE
+            // reconnect unless the user asks for it again.
+            if (k != "P" && k != "#GB?" && k != "#INFO?" && k != "#OTA?" &&
+                k != "#BLE?" && k != "#OTA" && k != "#IMU" && k != "#I") lastState[k] = msg
             enqueue(k, msg.toByteArray(Charsets.UTF_8))
         }
         pump()
+    }
+
+    /** Enable or disable the diagnostic-only IMU notification stream. */
+    fun setImuDiagnosticsStream(enabled: Boolean) {
+        if (!ready || !verified) return
+        send(if (enabled) "#IMU,1" else "#IMU,0")
+    }
+
+    /** Request diagnostic sensor status without enabling sample notifications. */
+    fun requestImuDiagnosticsStatus() {
+        if (!ready || !verified) return
+        send("#IMU?")
     }
 
     /** v7.9 发一次性的事件（到达统计、途经点）：不记进“重连补发”，免得重连后又放一遍特效 */
