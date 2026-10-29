@@ -139,7 +139,8 @@ class AmapNotifyListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn?.packageName == "com.tencent.mm") {
-            CallWatcher.onWechatPosted(this, sbn)
+            try { CallWatcher.onWechatPosted(this, sbn) }
+            catch (e: RuntimeException) { CallWatcher.lastInfo = "微信通知处理失败：${e.javaClass.simpleName}" }
             return
         }
         if (sbn == null || !sbn.packageName.startsWith("com.autonavi")) return
@@ -153,7 +154,10 @@ class AmapNotifyListener : NotificationListenerService() {
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        if (sbn?.packageName == "com.tencent.mm") CallWatcher.onWechatRemoved(sbn)
+        if (sbn?.packageName == "com.tencent.mm") {
+            try { CallWatcher.onWechatRemoved(sbn) }
+            catch (e: RuntimeException) { CallWatcher.lastInfo = "微信通知清理失败：${e.javaClass.simpleName}" }
+        }
     }
 
     /**

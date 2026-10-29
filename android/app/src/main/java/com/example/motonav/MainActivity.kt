@@ -156,7 +156,7 @@ import java.io.File
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  */
-const val APP_VERSION = "v8.3.42"
+const val APP_VERSION = "v8.3.43"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -1121,9 +1121,11 @@ class MainActivity : AppCompatActivity() {
             val access = AmapProbe.notifEnabled(this)
             wechatSub.text = if (CallWatcher.wechatEnabled && !access)
                 "需要通知使用权，点击这里前往系统设置"
-            else "圆屏提示微信来电和消息发送者，不显示消息正文；圆屏不能接听微信电话"
+            else "圆屏提示微信来电和消息；微信通知提供接听操作时，可按住圆屏接听"
             wechatSub.setTextColor(if (CallWatcher.wechatEnabled && !access) AMBER else SUB)
         }
+        card.addView(settingRow("显示微信消息详情", "默认显示发送者和消息摘要；关闭后只显示发送者",
+            toggle({ CallWatcher.wechatMessageDetails }) { CallWatcher.setWechatMessageDetails(this, it) }))
         card.addView(divider())
         // 亮度
         var syncing = false

@@ -6,10 +6,11 @@ bool callOn = false;
 String callNum = "";
 unsigned long callAt = 0, callSeenAt = 0;
 bool callIslandDrawn = false;
-// #I,kind,ttl: 1=phone, 2=WeChat call, 3=WeChat message.
+// #I,kind,ttl,canAnswer: 1=phone, 2=WeChat call, 3=WeChat message.
 uint8_t noticeKind = 0;
 unsigned long noticeAt = 0, noticeUntil = 0;
 bool noticeDirty = false;
+bool noticeCanAnswer = false;
 
 // v5.2 触屏接电话：按住任意位置 HOLD_MS 毫秒 → 发 "T,A" 给手机（v6.9 800 → 200）
 #define HOLD_MS 200
@@ -112,6 +113,7 @@ void powerButtonPoll() {
 bool touchDown = false;
 int16_t touchX0 = 0, touchY0 = 0, touchX1 = 0, touchY1 = 0;
 void dragMove(int dx, int dy, unsigned long now);   // v5.5 跟手换页
+void touchVectorToCanvas(float &dx, float &dy);
 int musicButtonAt(int x, int y);
 void musicTap(int x, int y);
 void dragEnd();
@@ -123,13 +125,20 @@ void touchPoll() {
   static unsigned long lastPoll = 0;
   unsigned long now = millis();
   if (!touchOK) return;
-  if (!touchIrq && !touchDown && !callOn && !powerMenuOn) return;
+  if (!touchIrq && !touchDown && !callOn && noticeKind != 2 && !powerMenuOn) return;
   if (now - lastPoll < 12) return;
   lastPoll = now;
   touchIrq = false;
-  if (callAnswerSent && now - callAnswerAt > 4000) callAnswerSent = false;   // 4 秒还在响：允许再按一次
+  if (callAnswerSent && now - callAnswerAt > 4000) {
+    callAnswerSent = false;   // 4 秒还在响：允许再按一次
+    if (noticeKind == 2) noticeDirty = true;
+  }
   int16_t x[5] = {0}, y[5] = {0};
   uint8_t n = touch.getPoint(x, y, 1);
+  if (n == 0 && (callOn || noticeKind == 2)) {
+    if (noticeKind == 2 && touchHold > 0) noticeDirty = true;
+    touchHoldAt = 0;
+  }
   if (powerMenuOn) {
     // A touch that began on the previous page must end before it can select a menu action.
     if (powerButtonDown || powerMenuNeedsTouchRelease) {
@@ -171,23 +180,28 @@ void touchPoll() {
     return;
   }
   if (n > 0) {
+    if (touchDown && touchHoldAt == 0 && (callOn || noticeKind == 2)) {
+      // A missing sample breaks the hold, even inside the release debounce window.
+      touchHoldAt = now;
+      touchX0 = x[0]; touchY0 = y[0];
+    }
     if (!touchDown) {
       dragAbort(); // A new touch starts a fresh gesture, even after a menu interrupted the last one.
       touchDown = true;
       touchHoldAt = now;
       touchX0 = touchX1 = x[0]; touchY0 = touchY1 = y[0];
       pendingEvt = "T,P," + String(x[0]) + "," + String(y[0]);
-      if (page == 2 && !callOn && !pairOn) { musicPressed = musicButtonAt(x[0], y[0]); musicDirty = true; }
+      if (page == 2 && !callOn && noticeKind != 2 && !pairOn) { musicPressed = musicButtonAt(x[0], y[0]); musicDirty = true; }
       if (fxOn && !callOn) { stopArriveFx(); touchEat = true; }          // v7.1 点一下结束到达特效
     }
     touchX1 = x[0]; touchY1 = y[0];
     touchLastSeen = now;
-    if (callOn || pairOn || touchEat || fxOn) dragAbort();
+    if (callOn || noticeKind == 2 || pairOn || touchEat || fxOn) dragAbort();
     else dragMove(touchX1 - touchX0, touchY1 - touchY0, now);
   } else if (touchDown && now - touchLastSeen > 80) {
     touchDown = false;
     touchHoldAt = 0;
-    if (callOn || pairOn || touchEat || fxOn) dragAbort();
+    if (callOn || noticeKind == 2 || pairOn || touchEat || fxOn) dragAbort();
     else {
       if (page == 2 && abs(touchX1 - touchX0) < 36 && abs(touchY1 - touchY0) < 36) musicTap(touchX0, touchY0);
       if (page == 1 && abs(touchX1 - touchX0) < 36 && abs(touchY1 - touchY0) < 36) weatherTap();
@@ -198,12 +212,22 @@ void touchPoll() {
   }
   // 来电：按住不动才算（滑动不算）
   bool still = abs(touchX1 - touchX0) < 60 && abs(touchY1 - touchY0) < 60;
-  touchHold = (callOn && touchDown && still) ? min(1.0f, (now - touchHoldAt) / (float)HOLD_MS) : 0;
+  float islandX = touchX0 - CX, islandY = touchY0 - CX;
+  touchVectorToCanvas(islandX, islandY);
+  islandX += CX; islandY += CX;
+  const bool wechatAnswer = noticeKind == 2 && noticeCanAnswer &&
+      (int32_t)(noticeUntil - now) > 0 && (int32_t)(touchHoldAt - noticeAt) >= 0 &&
+      islandX >= 94 && islandX < 386 && islandY >= 49 && islandY < 155;
+  const int oldHoldWidth = (int)(touchHold * 160);
+  touchHold = ((callOn || wechatAnswer) && n > 0 && touchDown && still) ?
+      min(1.0f, (now - touchHoldAt) / (float)HOLD_MS) : 0;
+  if (wechatAnswer && oldHoldWidth != (int)(touchHold * 160)) noticeDirty = true;
   if (touchHold >= 1 && !callAnswerSent) {
     callAnswerSent = true;
     callAnswerAt = now;
     touchHold = 0;
     pendingEvt = "T,A";
+    if (wechatAnswer) noticeDirty = true;
   }
 }
 
@@ -221,6 +245,21 @@ void drawHandset(float cx, float cy, float r, uint16_t c) {
     float rad = (k ? 155 : 25) * PI / 180;
     dot(cosf(rad) * r + (k ? -1 : 1) * r * 0.04f, -sinf(rad) * r * 0.55f + r * 0.25f + r * 0.21f, r * 0.32f);
   }
+}
+
+// Small vector mark: overlapping chat bubbles on WeChat green.
+void drawWechatMark(int cx, int cy) {
+  const uint16_t green = 0x060C;
+  aaDisc(cx, cy, 14, green);
+  aaDisc(cx - 4, cy - 3, 7, C_WHITE);
+  gfx->fillTriangle(cx - 9, cy + 1, cx - 10, cy + 7, cx - 4, cy + 2, C_WHITE);
+  aaDisc(cx + 5, cy + 4, 7, green);
+  aaDisc(cx + 5, cy + 4, 6, C_WHITE);
+  gfx->fillTriangle(cx + 8, cy + 8, cx + 11, cy + 12, cx + 4, cy + 9, C_WHITE);
+  aaDisc(cx - 7, cy - 4, 1, green);
+  aaDisc(cx - 2, cy - 4, 1, green);
+  aaDisc(cx + 3, cy + 3, 1, green);
+  aaDisc(cx + 7, cy + 3, 1, green);
 }
 
 void drawCallScreen() {
@@ -285,14 +324,25 @@ void drawNotificationIsland() {
   if (noticeKind == 0 || callOn) return;
   const bool isCall = noticeKind == 2;
   const uint16_t accent = isCall ? C_GREEN : C_CYAN;
-  gfx->fillRoundRect(94, 49, 292, 80, 30, C_BLACK);
-  gfx->drawRoundRect(94, 49, 292, 80, 30, accent);
-  aaDisc(119, 78, 9, accent);
-  printCentered(noticeKind == 1 || isCall ? "INCOMING CALL" : "WECHAT MESSAGE",
-                CX + 6, 61, 2, accent);
+  const int cardH = noticeKind == 1 ? 80 : 106;
+  gfx->fillRoundRect(94, 49, 292, cardH, 30, C_BLACK);
+  gfx->drawRoundRect(94, 49, 292, cardH, 30, accent);
+  if (noticeKind == 1) {
+    aaDisc(119, 70, 14, C_GREEN);
+    drawHandset(119, 72, 8, C_WHITE);
+  } else drawWechatMark(119, 70);
+  printCentered(noticeKind == 1 ? "PHONE CALL" : isCall ? "WECHAT CALL" : "WECHAT MESSAGE",
+                CX + 15, 61, 2, accent);
   int labelSlot = noticeKind == 1 ? 2 : 13;
   if (imgs[labelSlot].show && imgs[labelSlot].showW > 0) drawTextImg(labelSlot, 85, 0xFF);
   else printCentered(noticeKind == 1 ? "INCOMING CALL" : isCall ? "INCOMING CALL" : "NEW MESSAGE",
                      CX, 92, 2, C_WHITE);
+  if (isCall) {
+    printCentered(callAnswerSent ? "ANSWERING..." : noticeCanAnswer ? "HOLD ISLAND TO ANSWER" : "ANSWER ON PHONE",
+                  CX, 134, 1, callAnswerSent || noticeCanAnswer ? C_GREEN : C_GREY);
+    if (noticeCanAnswer && !callAnswerSent && touchHold > 0) {
+      gfx->fillRoundRect(153, 147, constrain((int)(touchHold * 160), 0, 160), 4, 2, C_GREEN);
+    }
+  }
   needFlush = true;
 }

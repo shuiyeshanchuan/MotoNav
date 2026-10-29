@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.text.TextPaint
+import android.text.TextUtils
 import kotlin.math.ceil
 
 /**
@@ -40,6 +42,44 @@ object TextImage {
 
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         Canvas(bmp).drawText(t, 0f, -fm.ascent, p)
+        return pack(bmp)
+    }
+
+    /** Two short rows for the round-screen WeChat message island. */
+    fun renderNotice(title: String, body: String): Img? {
+        // 240 x 60 at 4 bpp stays within the firmware's 8 KiB image buffer
+        // and its 32 BLE fragments at the common 247-byte MTU.
+        val maxW = 240
+        val sender = title.trim().ifBlank { "微信消息" }
+        val preview = body.replace(Regex("\\s+"), " ").trim().take(200)
+        if (preview.isBlank()) return render(sender, maxW, 36f, 20f)
+        val heading = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.DEFAULT_BOLD
+            color = Color.WHITE
+            textSize = 24f
+        }
+        val detail = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.DEFAULT
+            color = Color.WHITE
+            textSize = 21f
+        }
+        val first = TextUtils.ellipsize(sender, heading, maxW.toFloat(), TextUtils.TruncateAt.END).toString()
+        val second = TextUtils.ellipsize(preview, detail, maxW.toFloat(), TextUtils.TruncateAt.END).toString()
+        val firstHeight = ceil(heading.fontMetrics.descent - heading.fontMetrics.ascent).toInt()
+        val secondHeight = ceil(detail.fontMetrics.descent - detail.fontMetrics.ascent).toInt()
+        val w = ceil(maxOf(heading.measureText(first), detail.measureText(second))).toInt().coerceIn(1, maxW)
+        val h = (firstHeight + 2 + secondHeight).coerceIn(1, 60)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        Canvas(bmp).apply {
+            drawText(first, 0f, -heading.fontMetrics.ascent, heading)
+            drawText(second, 0f, firstHeight + 2 - detail.fontMetrics.ascent, detail)
+        }
+        return pack(bmp)
+    }
+
+    private fun pack(bmp: Bitmap): Img {
+        val w = bmp.width
+        val h = bmp.height
         val px = IntArray(w * h)
         bmp.getPixels(px, 0, w, 0, 0, w, h)
         bmp.recycle()

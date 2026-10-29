@@ -59,6 +59,8 @@ if ($Task -in @('Android','All')) {
 }
 
 if ($Task -in @('Firmware','All')) {
-    & (Join-Path $root 'firmware\build.ps1') -Board 175c -CliPath $arduinoCli -ConfigFile $arduinoConfig -OtaPrivateKey $otaPrivateKey
+    $pwsh = Get-Command pwsh -ErrorAction SilentlyContinue
+    if (-not $pwsh) { throw 'PowerShell 7 (pwsh) is required to sign firmware OTA manifests.' }
+    & $pwsh.Source -NoProfile -File (Join-Path $root 'firmware\build.ps1') -Board 175c -CliPath $arduinoCli -ConfigFile $arduinoConfig -OtaPrivateKey $otaPrivateKey
     if ($LASTEXITCODE -ne 0) { throw "Firmware build failed ($LASTEXITCODE)" }
 }

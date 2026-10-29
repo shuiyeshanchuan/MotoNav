@@ -320,11 +320,18 @@ void handleText(const String &m) {
   if (m.startsWith("#WX,")) { parseWeatherExtra(m); return; }
   if (m.startsWith("#W,")) { parseWeather(m); return; }   // v5.3 天气
   if (m.startsWith("#I,")) {                             // 通知岛：0=清除，1=电话，2=微信来电，3=微信消息
-    int kind = -1, ttl = 0;
-    if (sscanf(m.c_str(), "#I,%d,%d", &kind, &ttl) < 1 || kind < 0 || kind > 3) return;
+    int kind = -1, ttl = 0, canAnswer = 0;
+    int count = sscanf(m.c_str(), "#I,%d,%d,%d", &kind, &ttl, &canAnswer);
+    if (count < 1 || kind < 0 || kind > 3) return;
+    const unsigned long now = millis();
+    const bool sameWechatCall = kind == 2 && noticeKind == 2 && (int32_t)(noticeUntil - now) > 0;
+    if (kind != noticeKind || kind == 0 || (kind == 2 && !sameWechatCall)) {
+      callAnswerSent = false; touchHold = 0;
+    }
     noticeKind = (uint8_t)kind;
-    noticeAt = millis();
-    noticeUntil = kind ? noticeAt + (unsigned long)constrain(ttl, 1000, 30000) : 0;
+    noticeCanAnswer = kind == 2 && count >= 3 && canAnswer == 1;
+    if (!sameWechatCall) noticeAt = now;
+    noticeUntil = kind ? now + (unsigned long)constrain(ttl, 1000, 30000) : 0;
     noticeDirty = true;
     return;
   }

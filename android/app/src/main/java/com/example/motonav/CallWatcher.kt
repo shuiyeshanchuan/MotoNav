@@ -2,6 +2,7 @@ package com.example.motonav
 
 import android.Manifest
 import android.app.Notification
+import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -16,6 +17,7 @@ import android.service.notification.StatusBarNotification
 import android.telecom.TelecomManager
 import android.telephony.TelephonyManager
 import android.os.SystemClock
+import java.util.Locale
 
 /**
  * 版本：跟随 App 版本，见 MainActivity.kt 里的 APP_VERSION（v5.0 新增）
@@ -39,6 +41,8 @@ object CallWatcher {
         private set
     @Volatile var wechatEnabled = false
         private set
+    @Volatile var wechatMessageDetails = true
+        private set
     @Volatile var lastInfo = "（还没有来电）"
     @Volatile var lastTouch = "（还没按过）"           // v5.3 圆屏最后一次按下的位置
     private val main = Handler(Looper.getMainLooper())
@@ -46,10 +50,17 @@ object CallWatcher {
     private var lastNum = ""
     private var wechatCallKey: String? = null
     private var wechatCallLabel = ""
+    private var wechatAnswerIntent: PendingIntent? = null
+    private var wechatAnswerRequestedAt = 0L
     private var wechatCallStartedAt = 0L
+    private var wechatCallPostTime = 0L
     private var wechatCallPublishedAt = 0L
     private var lastWechatMessage = ""
     private var lastWechatMessageAt = 0L
+    private val twoLineFirmware = Regex("^v7\\.12\\.9-nav\\.(\\d+)$")
+    private val clearWechatMessage = Runnable {
+        if (wechatCallKey == null) BleLink.sendImage(13, 0, 0, ByteArray(0))
+    }
     private val noticeRefresh = object : Runnable {
         override fun run() {
             when {
@@ -57,11 +68,14 @@ object CallWatcher {
                     BleLink.send("#i,1,${if (privacyMode) "" else lastNum}")
                     BleLink.send("#I,1,30000")
                 }
-                wechatCallKey != null && wechatEnabled &&
-                    SystemClock.elapsedRealtime() - wechatCallStartedAt < 120_000 -> BleLink.send("#I,2,30000")
+                wechatCallKey != null && wechatEnabled && wechatCallFresh() ->
+                    BleLink.send("#I,2,30000,${if (wechatAnswerIntent != null) 1 else 0}")
                 wechatCallKey != null -> {
                     wechatCallKey = null
                     wechatCallLabel = ""
+                    wechatAnswerIntent = null
+                    wechatAnswerRequestedAt = 0L
+                    wechatCallPostTime = 0L
                     clearNotice()
                     return
                 }
@@ -81,6 +95,7 @@ object CallWatcher {
         enabled = prefs.getBoolean("call_show", true)
         privacyMode = prefs.getBoolean("call_privacy", false)
         wechatEnabled = prefs.getBoolean("wechat_notice", false)
+        wechatMessageDetails = prefs.getBoolean("wechat_message_details", true)
     }
 
     fun setEnabled(context: Context, on: Boolean) {
@@ -92,9 +107,13 @@ object CallWatcher {
     fun setPrivacyMode(context: Context, on: Boolean) {
         privacyMode = on
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("call_privacy", on).apply()
-        if (on) lastNum = ""
+        if (on) {
+            lastNum = ""
+            main.removeCallbacks(clearWechatMessage)
+            BleLink.sendImage(13, 0, 0, ByteArray(0))
+        }
         if (ringing) publishPhone()
-        else if (wechatCallKey != null && wechatEnabled) publishWechatCall()
+        else if (wechatCallKey != null && wechatEnabled && wechatCallFresh()) publishWechatCall()
     }
 
     fun requiredPermissions(): Array<String> = if (privacyMode)
@@ -104,9 +123,23 @@ object CallWatcher {
         wechatEnabled = on
         context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("wechat_notice", on).apply()
         if (!on) {
+            main.removeCallbacks(clearWechatMessage)
             wechatCallKey = null
+            wechatAnswerIntent = null
+            wechatAnswerRequestedAt = 0L
             wechatCallStartedAt = 0L
+            wechatCallPostTime = 0L
             if (!ringing) clearNotice()
+        }
+    }
+
+    fun setWechatMessageDetails(context: Context, on: Boolean) {
+        wechatMessageDetails = on
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean("wechat_message_details", on).apply()
+        if (!on && wechatCallKey == null) {
+            main.removeCallbacks(clearWechatMessage)
+            BleLink.sendImage(13, 0, 0, ByteArray(0))
         }
     }
 
@@ -157,6 +190,8 @@ object CallWatcher {
         receiver?.let { try { c.unregisterReceiver(it) } catch (_: Exception) {} }
         receiver = null
         main.removeCallbacks(noticeRefresh)
+        main.removeCallbacks(clearWechatMessage)
+        if (wechatCallKey == null) BleLink.sendImage(13, 0, 0, ByteArray(0))
     }
 
     private fun show(raw: String?) {
@@ -174,6 +209,10 @@ object CallWatcher {
         else BleLink.sendImage(slot, 0, 0, ByteArray(0))
     }
 
+    private fun supportsTwoLineNotice(): Boolean =
+        BleLink.screenBoard == "175C" &&
+            (twoLineFirmware.matchEntire(BleLink.screenFirmware)?.groupValues?.get(1)?.toIntOrNull() ?: 0) >= 4
+
     private fun publishPhone() {
         val name = if (!privacyMode && lastNum.isNotEmpty()) lookupName(lastNum) else null
         sendLabel(2, if (privacyMode) "来电" else name.orEmpty())
@@ -189,8 +228,7 @@ object CallWatcher {
         ringing = false
         lastNum = ""
         BleLink.send("#i,0")
-        if (wechatCallKey != null && wechatEnabled &&
-            SystemClock.elapsedRealtime() - wechatCallStartedAt < 120_000) publishWechatCall()
+        if (wechatCallKey != null && wechatEnabled && wechatCallFresh()) publishWechatCall()
         else clearNotice()
     }
 
@@ -199,14 +237,42 @@ object CallWatcher {
         main.postDelayed(noticeRefresh, 20_000)
     }
 
+    private fun wechatCallFresh(): Boolean = wechatCallPostTime > 0L &&
+        System.currentTimeMillis() - wechatCallPostTime in 0L..120_000L &&
+        SystemClock.elapsedRealtime() - wechatCallStartedAt < 120_000L
+
     private fun clearNotice() {
         main.removeCallbacks(noticeRefresh)
+        main.removeCallbacks(clearWechatMessage)
         BleLink.send("#I,0")
         BleLink.sendImage(2, 0, 0, ByteArray(0))
         BleLink.sendImage(13, 0, 0, ByteArray(0))
     }
 
-    /** 通知使用权授予后读取微信通知；只发送发送者/来电标签，不上传消息正文。 */
+    @Suppress("DEPRECATION")
+    private fun wechatAnswerAction(n: Notification): PendingIntent? {
+        if (Build.VERSION.SDK_INT >= 31) {
+            val extras = n.extras
+            val answer = try {
+                if (Build.VERSION.SDK_INT >= 33)
+                    extras?.getParcelable(Notification.EXTRA_ANSWER_INTENT, PendingIntent::class.java)
+                else extras?.getParcelable(Notification.EXTRA_ANSWER_INTENT) as? PendingIntent
+            } catch (_: RuntimeException) { null }
+            if (answer?.creatorPackage == "com.tencent.mm") return answer
+        }
+        for (action in n.actions.orEmpty()) {
+            val title = action.title?.toString()?.trim()?.lowercase(Locale.ROOT).orEmpty()
+            if (listOf("拒绝", "挂断", "取消", "decline", "reject", "hang", "ignore").any { it in title }) continue
+            if (listOf("接听", "接通", "接受", "answer", "accept").none { it in title }) continue
+            if (action.remoteInputs?.isNotEmpty() == true) continue
+            if (Build.VERSION.SDK_INT >= 31 && action.isAuthenticationRequired) continue
+            val intent = action.actionIntent
+            if (intent?.creatorPackage == "com.tencent.mm") return intent
+        }
+        return null
+    }
+
+    /** 通知使用权授予后读取微信通知；正文只发给已配对的圆屏，不写入诊断日志。 */
     fun onWechatPosted(context: Context, sbn: StatusBarNotification) {
         if (ctx == null) load(context)
         if (!wechatEnabled || sbn.packageName != "com.tencent.mm") return
@@ -216,19 +282,53 @@ object CallWatcher {
         val title = n.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
         val body = n.extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         val callHint = "$title $body"
+        val callType = if (Build.VERSION.SDK_INT >= 31) n.extras?.getInt(
+            Notification.EXTRA_CALL_TYPE, Notification.CallStyle.CALL_TYPE_UNKNOWN) else null
+        if (callType == Notification.CallStyle.CALL_TYPE_ONGOING) {
+            if (wechatCallKey == sbn.key) {
+                wechatCallKey = null
+                wechatCallLabel = ""
+                wechatAnswerIntent = null
+                wechatAnswerRequestedAt = 0L
+                wechatCallPostTime = 0L
+                if (!ringing) clearNotice()
+            }
+            return
+        }
         val isCall = n.category == Notification.CATEGORY_CALL ||
             callHint.contains("邀请你进行语音通话") || callHint.contains("邀请你进行视频通话") ||
             (sbn.isOngoing && (callHint.contains("语音通话") || callHint.contains("视频通话")))
         if (isCall) {
+            main.removeCallbacks(clearWechatMessage)
             val now = SystemClock.elapsedRealtime()
             val sameCall = wechatCallKey == sbn.key
-            if (!sameCall) wechatCallStartedAt = now
-            if (now - wechatCallStartedAt >= 120_000) return
+            if (!sameCall) {
+                wechatCallStartedAt = now
+                wechatCallPostTime = sbn.postTime
+                wechatAnswerRequestedAt = 0L
+            }
+            if (!wechatCallFresh()) {
+                if (sameCall) {
+                    wechatCallKey = null
+                    wechatCallLabel = ""
+                    wechatAnswerIntent = null
+                    wechatAnswerRequestedAt = 0L
+                    wechatCallStartedAt = 0L
+                    wechatCallPostTime = 0L
+                    wechatCallPublishedAt = 0L
+                    if (!ringing) clearNotice()
+                }
+                return
+            }
             val label = if (privacyMode || n.visibility == Notification.VISIBILITY_SECRET) "来电"
                 else title.lineSequence().firstOrNull().orEmpty().take(32).ifBlank { "微信来电" }
-            if (sameCall && label == wechatCallLabel && now - wechatCallPublishedAt < 15_000) return
+            val answer = if (wechatAnswerRequestedAt != 0L && now - wechatAnswerRequestedAt < 10_000)
+                null else wechatAnswerAction(n)
+            if (sameCall && label == wechatCallLabel && answer == wechatAnswerIntent &&
+                now - wechatCallPublishedAt < 15_000) return
             wechatCallKey = sbn.key
             wechatCallLabel = label
+            wechatAnswerIntent = answer
             if (!ringing) publishWechatCall()
             return
         }
@@ -238,9 +338,18 @@ object CallWatcher {
         if (signature == lastWechatMessage && now - lastWechatMessageAt < 3000) return
         lastWechatMessage = signature
         lastWechatMessageAt = now
-        sendLabel(13, if (privacyMode || n.visibility == Notification.VISIBILITY_SECRET) "微信消息"
-            else title.lineSequence().firstOrNull().orEmpty().take(32).ifBlank { "微信消息" })
+        main.removeCallbacks(clearWechatMessage)
+        val hidden = privacyMode || n.visibility == Notification.VISIBILITY_SECRET
+        val label = if (hidden) "微信消息"
+            else title.lineSequence().firstOrNull().orEmpty().take(32).ifBlank { "微信消息" }
+        if (wechatMessageDetails && !hidden && body.isNotBlank()) {
+            val img = if (supportsTwoLineNotice()) TextImage.renderNotice(label, body)
+                else TextImage.render("$label：${body.replace(Regex("\\s+"), " ").trim()}", 260, 30f, 18f)
+            if (img != null) BleLink.sendImage(13, img.w, img.h, img.data)
+            else sendLabel(13, label)
+        } else sendLabel(13, label)
         BleLink.sendEvent("#I,3,5000")
+        main.postDelayed(clearWechatMessage, 5_500)
         lastInfo = "微信消息提示已发送"
     }
 
@@ -248,7 +357,10 @@ object CallWatcher {
         if (sbn.key != wechatCallKey) return
         wechatCallKey = null
         wechatCallLabel = ""
+        wechatAnswerIntent = null
+        wechatAnswerRequestedAt = 0L
         wechatCallStartedAt = 0L
+        wechatCallPostTime = 0L
         wechatCallPublishedAt = 0L
         if (!ringing) clearNotice()
     }
@@ -256,20 +368,24 @@ object CallWatcher {
     fun onWechatListenerDisconnected() {
         wechatCallKey = null
         wechatCallLabel = ""
+        wechatAnswerIntent = null
+        wechatAnswerRequestedAt = 0L
         wechatCallStartedAt = 0L
+        wechatCallPostTime = 0L
         wechatCallPublishedAt = 0L
         if (!ringing) clearNotice()
     }
 
     private fun publishWechatCall() {
         sendLabel(13, if (privacyMode) "来电" else wechatCallLabel)
-        BleLink.send("#I,2,30000")
+        BleLink.send("#I,2,30000,${if (wechatAnswerIntent != null) 1 else 0}")
         wechatCallPublishedAt = SystemClock.elapsedRealtime()
-        lastInfo = "微信来电提示已发送（圆屏不能代接微信电话）"
+        lastInfo = if (wechatAnswerIntent != null) "微信来电：圆屏可按住接听"
+            else "微信来电：通知无接听动作，请在手机接听"
         scheduleRefresh()
     }
 
-    /** v5.3 圆屏发来的触摸事件："T,A" 按住够久了要接听；"T,P,x,y" 按下的位置；v5.4 "T,W" 要天气 */
+    /** 圆屏长按发 T,A；普通电话走 Telecom，微信来电只执行该通知提供的接听动作。 */
     fun onScreenTouch(p: List<String>) {
         when (p.getOrNull(1)) {
             "P" -> lastTouch = "x=${p.getOrNull(2)} y=${p.getOrNull(3)}"
@@ -280,17 +396,38 @@ object CallWatcher {
 
     private fun answer() {
         val c = ctx ?: return
-        if (!ringing) { lastInfo = "圆屏要求接听，但现在没有来电"; return }
-        if (!granted(c, Manifest.permission.ANSWER_PHONE_CALLS)) {
-            lastInfo = "圆屏要求接听，但没有“接听电话”权限（把来电显示关掉再打开授权）"; return
+        if (ringing) {
+            if (!granted(c, Manifest.permission.ANSWER_PHONE_CALLS)) {
+                lastInfo = "圆屏要求接听，但没有“接听电话”权限（把来电显示关掉再打开授权）"
+                return
+            }
+            lastInfo = try {
+                val tm = c.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
+                @Suppress("DEPRECATION")
+                tm.acceptRingingCall()
+                "已从圆屏接听普通电话"
+            } catch (e: Exception) {
+                "圆屏接听普通电话失败：${e.message}"
+            }
+            return
         }
+        if (!wechatEnabled || wechatCallKey == null || !wechatCallFresh()) {
+            lastInfo = "圆屏要求接听，但现在没有有效的微信来电"
+            return
+        }
+        val action = wechatAnswerIntent
+        if (action == null || action.creatorPackage != "com.tencent.mm") {
+            lastInfo = "当前微信通知没有可用的接听动作，请在手机接听"
+            return
+        }
+        wechatAnswerIntent = null
+        wechatAnswerRequestedAt = SystemClock.elapsedRealtime()
+        BleLink.send("#I,2,30000,0")
         lastInfo = try {
-            val tm = c.getSystemService(Context.TELECOM_SERVICE) as TelecomManager
-            @Suppress("DEPRECATION")
-            tm.acceptRingingCall()
-            "已从圆屏接听"
+            action.send()
+            "已向微信发送接听请求，等待来电状态更新"
         } catch (e: Exception) {
-            "圆屏接听失败：${e.message}"
+            "微信接听动作已失效：${e.message}，请在手机接听"
         }
     }
 
