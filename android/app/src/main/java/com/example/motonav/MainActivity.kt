@@ -156,7 +156,7 @@ import java.io.File
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  */
-const val APP_VERSION = "v8.3.41"
+const val APP_VERSION = "v8.3.42"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG

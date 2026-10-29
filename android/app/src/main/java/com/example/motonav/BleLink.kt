@@ -166,7 +166,7 @@ object BleLink {
     private val lastState = LinkedHashMap<String, String>()
     private class Img(val w: Int, val h: Int, val data: ByteArray)
     private val lastImg = HashMap<Int, Img?>()
-    private val imgId = IntArray(12)               // v5.5 4 → 8：天气用到了图片栏 4，原来只有 0~3 会闪退
+    private val imgId = IntArray(14)               // 与固件 IMG_SLOTS 一致：12 = 歌词，13 = 微信通知岛
 
     // ---- 给界面看的统计 ----
     @Volatile var sentCount = 0

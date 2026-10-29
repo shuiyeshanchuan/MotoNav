@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$ApkPath = (Join-Path $PSScriptRoot 'app/build/outputs/apk/release/app-release.apk'),
   [string]$ExpectedSha1 = ''
 )
