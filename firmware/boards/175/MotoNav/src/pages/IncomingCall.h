@@ -280,27 +280,27 @@ void drawCallScreen() {
       drawnAnswerSent != callAnswerSent;
   if (!full && holdWidth == drawnHoldWidth) return;
   if (full) {
-  // Preserve the current navigation/music/weather frame under the call island.
-  // The lower answer tab stays left of the right-side traffic-light card.
-  gfx->fillRoundRect(94, 49, 292, 79, 30, C_BLACK);
-  gfx->drawRoundRect(94, 49, 292, 79, 30, C_GREEN);
-  gfx->fillRoundRect(94, 109, 226, 66, 24, C_BLACK);
-  gfx->drawRoundRect(94, 109, 226, 66, 24, C_GREEN);
-  aaDisc(119, 78, 14, 0x2DC6);
-  drawHandset(119, 80, 8, C_WHITE);
-  printCentered("PHONE CALL", CX + 4, 66, 2, C_GREEN);
+  // One card keeps the title, caller and hold affordance in a single visual
+  // group. The previous two overlapping cards made the border look broken and
+  // pushed the number into the answer hint on the round screen.
+  const int cardX = 84, cardY = 52, cardW = 298, cardH = 142;
+  gfx->fillRoundRect(cardX, cardY, cardW, cardH, 30, C_BLACK);
+  gfx->drawRoundRect(cardX, cardY, cardW, cardH, 30, C_GREEN);
+  aaDisc(118, 80, 14, 0x2DC6);
+  drawHandset(118, 82, 8, C_WHITE);
+  printCentered("PHONE CALL", CX + 12, 64, 2, C_GREEN);
   bool hasName = imgs[2].show && imgs[2].showW > 0;
   if (hasName) {
-    drawTextImg(2, 86, 0xFF);
-    if (callNum.length()) printCentered(callNum, 207, 132, 2, C_GREY);
+    drawTextImg(2, 94, 0xFF);
+    if (callNum.length()) printCentered(callNum, CX, 137, 2, C_GREY);
   } else if (callNum.length()) {
-    printCentered(callNum, CX, 101, 2, C_WHITE);
+    printCentered(callNum, CX, 103, 2, C_WHITE);
   } else {
-    printCentered("INCOMING CALL", CX, 101, 2, C_WHITE);
+    printCentered("INCOMING CALL", CX, 103, 2, C_WHITE);
   }
   // Hold progress stays inside the island; a WeChat call never sets callOn.
   if (touchOK) {
-    printCentered(callAnswerSent ? "ANSWERING..." : "HOLD SCREEN TO ANSWER", 207, 155, 1,
+    printCentered(callAnswerSent ? "ANSWERING..." : "HOLD SCREEN TO ANSWER", CX, 159, 1,
                   callAnswerSent ? C_GREEN : C_GREY);
   }
   drawnCallAt = callAt;
@@ -314,8 +314,8 @@ void drawCallScreen() {
   // This bar is entirely inside the black tab, so a release can erase the
   // previous progress without repainting the rest of the island.
   if (touchOK && (full || holdWidth != drawnHoldWidth)) {
-    gfx->fillRect(119, 165, 160, 4, C_BLACK);
-    if (holdWidth > 0) gfx->fillRoundRect(119, 165, holdWidth, 4, 2, C_GREEN);
+    gfx->fillRect(153, 178, 160, 4, C_BLACK);
+    if (holdWidth > 0) gfx->fillRoundRect(153, 178, holdWidth, 4, 2, C_GREEN);
   }
   drawnHoldWidth = holdWidth;
   needFlush = true;

@@ -155,8 +155,10 @@ import java.io.File
  *   v8.3.39  圆屏方向圆盘默认锁定，打开调节开关后拖动并在松手时保存；微调按钮文字改为深色。
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
+ *   v8.3.47  微信无直接接听动作时不再把打开来电页当作可接听；诊断显示直接接口与当前路径。
+ *         普通电话灵动岛改为单张卡片（配合固件 v7.12.9-nav.6）。
  */
-const val APP_VERSION = "v8.3.46"
+const val APP_VERSION = "v8.3.47"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
