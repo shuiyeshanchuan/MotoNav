@@ -45,6 +45,7 @@ object CallWatcher {
     @Volatile var wechatMessageDetails = true
         private set
     @Volatile var lastInfo = "（还没有来电）"
+    @Volatile var wechatAnswerDiagnostic = "尚未收到微信来电"
     @Volatile var lastTouch = "（还没按过）"           // v5.3 圆屏最后一次按下的位置
     private val main = Handler(Looper.getMainLooper())
     private var ringing = false
@@ -269,8 +270,9 @@ object CallWatcher {
             } catch (_: RuntimeException) { null }
             if (answer?.creatorPackage == "com.tencent.mm") return answer
         }
-        val answerLabels = setOf("接听", "接听语音通话", "接听视频通话", "接听电话",
-            "answer", "answer call", "answer voice call", "answer video call", "accept call")
+        val answerLabels = setOf("接听", "接通", "接受", "接听语音通话", "接听视频通话", "接听电话",
+            "接通语音通话", "接通视频通话", "接受语音通话", "接受视频通话",
+            "answer", "answer call", "answer voice call", "answer video call", "accept", "accept call")
         val candidates = ArrayList<PendingIntent>()
         for (action in n.actions.orEmpty()) {
             val title = action.title?.toString()?.trim()?.lowercase(Locale.ROOT).orEmpty()
@@ -391,9 +393,15 @@ object CallWatcher {
             }
             val label = if (privacyMode || n.visibility == Notification.VISIBILITY_SECRET) "来电"
                 else title.lineSequence().firstOrNull().orEmpty().take(32).ifBlank { "微信来电" }
+            val notificationAnswer = wechatAnswerAction(n)
             val answer = if (wechatAnswerRequestedAt != 0L && now - wechatAnswerRequestedAt < 10_000)
-                null else wechatAnswerAction(n)
+                null else notificationAnswer
             val open = wechatOpenAction(n)
+            // Record only action availability; caller and message content stay private.
+            wechatAnswerDiagnostic = "通知接听动作=${if (notificationAnswer != null) "有" else "无"}，" +
+                "微信动作数=${n.actions.orEmpty().count { it.actionIntent?.creatorPackage == "com.tencent.mm" }}，" +
+                "系统接听字段=${if (Build.VERSION.SDK_INT >= 31 && n.extras?.containsKey(Notification.EXTRA_ANSWER_INTENT) == true) "有" else "无"}，" +
+                "无障碍=${if (AmapScreenReader.isConnected()) "已开启" else "未开启"}"
             if (sameCall && label == wechatCallLabel && answer == wechatAnswerIntent && open == wechatOpenIntent &&
                 now - wechatCallPublishedAt < 15_000) return
             wechatCallKey = sbn.key

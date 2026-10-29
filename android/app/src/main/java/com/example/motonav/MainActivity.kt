@@ -156,7 +156,7 @@ import java.io.File
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  */
-const val APP_VERSION = "v8.3.44"
+const val APP_VERSION = "v8.3.45"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -1106,10 +1106,10 @@ class MainActivity : AppCompatActivity() {
         val wechatSub = label("", 12f, SUB).apply {
             setOnClickListener {
                 if (CallWatcher.wechatEnabled) {
-                    val action = if (!AmapProbe.notifEnabled(this@MainActivity))
-                        "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"
-                    else Settings.ACTION_ACCESSIBILITY_SETTINGS
-                    try { startActivity(Intent(action)) }
+                    val settings = if (!AmapProbe.notifEnabled(this@MainActivity))
+                        Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                    else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+                    try { startActivity(settings) }
                     catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知或无障碍服务") }
                 }
             }
@@ -1126,7 +1126,7 @@ class MainActivity : AppCompatActivity() {
             wechatSub.text = if (CallWatcher.wechatEnabled && !access)
                 "需要通知使用权，点击这里前往系统设置"
             else if (CallWatcher.wechatEnabled && !AmapProbe.screenEnabled(this))
-                "微信通知无接听按钮时，需启用 MotoNav 无障碍服务；点击前往设置"
+                "通知无接听动作时可选无障碍辅助；点击打开应用信息，右上角允许受限设置"
             else "圆屏按住微信来电岛 0.5 秒尝试接听；实际接通取决于微信来电界面"
             wechatSub.setTextColor(if (CallWatcher.wechatEnabled && (!access || !AmapProbe.screenEnabled(this))) AMBER else SUB)
         }
@@ -1684,6 +1684,7 @@ class MainActivity : AppCompatActivity() {
                     (if (NaviBridge.extraInfo.isNotEmpty()) "${NaviBridge.extraInfo}\n" else "") +
                     "巡航/安全提示：${NaviBridge.cruiseRaw}\n" +
                     "来电显示：${CallWatcher.lastInfo}（${CallWatcher.permsText(this)}）\n" +
+                    "微信接听诊断：${CallWatcher.wechatAnswerDiagnostic}\n" +
                     "圆屏最后一次按下：${CallWatcher.lastTouch}\n" +
                     "音乐遥控：${MusicBridge.info}\n" +
                     "天气：${Weather.info}\n" +
