@@ -251,6 +251,9 @@ object CallWatcher {
         System.currentTimeMillis() - wechatCallPostTime in 0L..120_000L &&
         SystemClock.elapsedRealtime() - wechatCallStartedAt < 120_000L
 
+    fun hasFreshWechatCall(): Boolean = wechatEnabled && !ringing &&
+        wechatCallKey != null && wechatCallFresh()
+
     private fun clearNotice() {
         main.removeCallbacks(noticeRefresh)
         main.removeCallbacks(clearWechatMessage)

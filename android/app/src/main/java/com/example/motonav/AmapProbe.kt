@@ -220,12 +220,14 @@ class AmapNotifyListener : NotificationListenerService() {
     }
 }
 
-/** 读高德界面上的文字（系统设置 → 无障碍里打开后运行；屏幕亮着、高德在前台时才有内容） */
+/** 读取高德界面；用户长按圆屏接听时，也检查微信当前来电页的明确接听控件。 */
 class AmapScreenReader : AccessibilityService() {
     private var lastAt = 0L
 
     companion object {
         @Volatile private var connected: AmapScreenReader? = null
+        @Volatile var wechatAnswerUiDiagnostic = "尚未检查微信来电页"
+            private set
 
         fun isConnected(): Boolean = connected != null
         fun hasWechatAnswerControl(): Boolean = try { connected?.findWechatAnswer(false) == true }
@@ -253,8 +255,13 @@ class AmapScreenReader : AccessibilityService() {
 
     /** Refuse ambiguous pages and buttons; WeChat does not expose a stable call-control API. */
     private fun findWechatAnswer(click: Boolean): Boolean {
-        val root = rootInActiveWindow ?: return false
-        if (root.packageName?.toString() != "com.tencent.mm") return false
+        fun reject(reason: String): Boolean {
+            wechatAnswerUiDiagnostic = reason
+            return false
+        }
+        if (!CallWatcher.hasFreshWechatCall()) return reject("没有有效的微信来电")
+        val root = rootInActiveWindow ?: return reject("当前来电页不可读取")
+        if (root.packageName?.toString() != "com.tencent.mm") return reject("微信来电页未在前台")
         val nodes = ArrayList<AccessibilityNodeInfo>(180)
         val parents = ArrayList<AccessibilityNodeInfo>()
         fun collect(node: AccessibilityNodeInfo, depth: Int) {
@@ -281,37 +288,30 @@ class AmapScreenReader : AccessibilityService() {
         }
         try {
             collect(root, 0)
-            if (nodes.size >= 180) return false
+            if (nodes.size >= 180) return reject("来电页控件过多，无法安全识别")
             val pageLabels = nodes.flatMap(::labels)
             val chatTabs = setOf("微信", "通讯录", "发现", "我")
-            if (pageLabels.filter { it in chatTabs }.distinct().size >= 2) return false
+            if (pageLabels.filter { it in chatTabs }.distinct().size >= 2) return reject("当前是微信聊天页")
             if (pageLabels.any { label ->
                 listOf("正在通话", "通话中", "已接通", "通话结束").any { it in label }
-            }) return false
-            val incoming = pageLabels.any {
-                listOf("邀请你进行语音通话", "邀请你进行视频通话", "语音来电", "视频来电",
-                    "语音通话邀请", "视频通话邀请", "incoming call", "incoming voice call", "incoming video call")
-                    .any { marker -> marker in it }
-            }
-            val callPage = pageLabels.any {
-                listOf("语音通话", "视频通话", "微信电话", "voice call", "video call")
-                    .any { marker -> marker in it }
-            }
+            }) return reject("当前不是待接听状态")
             val rootBounds = Rect().also { root.getBoundsInScreen(it) }
-            if (rootBounds.isEmpty) return false
+            if (rootBounds.isEmpty) return reject("来电页尺寸无效")
             fun buttonBounds(target: AccessibilityNodeInfo): Rect? {
                 val bounds = Rect().also { target.getBoundsInScreen(it) }
-                if (bounds.isEmpty || bounds.centerY() <= rootBounds.centerY() ||
+                if (bounds.isEmpty || bounds.centerY() < rootBounds.top + rootBounds.height() * 3 / 5 ||
                     bounds.width().toLong() * bounds.height() >
                     rootBounds.width().toLong() * rootBounds.height() / 3) return null
                 return bounds
             }
             val declineLabels = setOf("拒绝", "拒接", "挂断", "decline", "decline call", "reject", "reject call")
-            val hasDecline = nodes.any {
-                it.isVisibleToUser && labels(it).any(declineLabels::contains) &&
-                    clickTarget(it)?.let(::buttonBounds) != null
+            val declineBounds = LinkedHashMap<String, Rect>()
+            for (node in nodes) {
+                if (!node.isVisibleToUser || labels(node).none(declineLabels::contains)) continue
+                val bounds = clickTarget(node)?.let(::buttonBounds) ?: continue
+                declineBounds[bounds.toShortString()] = bounds
             }
-            if (!incoming && !(callPage && hasDecline)) return false
+            if (declineBounds.size != 1) return reject("未找到唯一的底部拒绝按钮")
 
             val answerLabels = setOf("接听", "接听语音通话", "接听视频通话", "接听微信电话",
                 "answer", "answer call", "answer voice call", "answer video call", "accept call")
@@ -326,10 +326,21 @@ class AmapScreenReader : AccessibilityService() {
                 val target = clickTarget(node) ?: continue
                 val bounds = buttonBounds(target) ?: continue
                 candidates[bounds.toShortString()] = target
-                if (candidates.size > 1) return false
+                if (candidates.size > 1) return reject("底部接听按钮不唯一")
             }
-            val target = candidates.values.singleOrNull() ?: return false
-            return !click || target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            val target = candidates.values.singleOrNull() ?: return reject("未找到可点击的底部接听按钮")
+            val answerBounds = buttonBounds(target) ?: return reject("接听按钮位置无效")
+            val decline = declineBounds.values.single()
+            if (kotlin.math.abs(answerBounds.centerX() - decline.centerX()) < rootBounds.width() / 4 ||
+                kotlin.math.abs(answerBounds.centerY() - decline.centerY()) > rootBounds.height() / 8)
+                return reject("接听与拒绝按钮布局不符合来电页")
+            if (!click) {
+                wechatAnswerUiDiagnostic = "已识别底部接听与拒绝按钮"
+                return true
+            }
+            val sent = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            wechatAnswerUiDiagnostic = if (sent) "已点击接听按钮，等待微信更新通话状态" else "接听按钮点击失败"
+            return sent
         } finally {
             parents.forEach { it.recycle() }
             nodes.forEach { if (it !== root) it.recycle() }

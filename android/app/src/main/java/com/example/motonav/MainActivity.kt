@@ -156,7 +156,7 @@ import java.io.File
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  */
-const val APP_VERSION = "v8.3.45"
+const val APP_VERSION = "v8.3.46"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -1685,6 +1685,7 @@ class MainActivity : AppCompatActivity() {
                     "巡航/安全提示：${NaviBridge.cruiseRaw}\n" +
                     "来电显示：${CallWatcher.lastInfo}（${CallWatcher.permsText(this)}）\n" +
                     "微信接听诊断：${CallWatcher.wechatAnswerDiagnostic}\n" +
+                    "微信来电页：${AmapScreenReader.wechatAnswerUiDiagnostic}\n" +
                     "圆屏最后一次按下：${CallWatcher.lastTouch}\n" +
                     "音乐遥控：${MusicBridge.info}\n" +
                     "天气：${Weather.info}\n" +
