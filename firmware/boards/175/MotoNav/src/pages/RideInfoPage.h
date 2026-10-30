@@ -24,6 +24,23 @@ static void drawRideMetric(int x, int y, int w, int h,
   printCentered(value, x + w / 2, y + 34, 2, color);
 }
 
+void rideInfoPageEnter() {
+  ImuPageTelemetry telemetry;
+  readImuPageTelemetry(telemetry);
+  if (!telemetry.streamEnabled) {
+    setImuDiagnosticsStream(true);
+    rideInfoStreamOwned = true;
+  } else {
+    rideInfoStreamOwned = false;
+  }
+}
+
+void rideInfoPageLeave() {
+  if (!rideInfoStreamOwned) return;
+  setImuDiagnosticsStream(false);
+  rideInfoStreamOwned = false;
+}
+
 void drawRideInfo() {
   onWaitScreen = false;
   frameIsMap = false;

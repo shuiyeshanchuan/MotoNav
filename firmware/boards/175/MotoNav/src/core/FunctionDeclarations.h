@@ -77,6 +77,8 @@ void drawPageDots();
 void drawWaiting(int st);
 void drawRideInfo();
 void rideInfoTick();
+void rideInfoPageEnter();
+void rideInfoPageLeave();
 void drawPairScreen();
 static float frand(float a, float b);
 void startArriveFx(bool wp);

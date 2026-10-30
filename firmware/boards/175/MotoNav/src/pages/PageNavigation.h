@@ -189,6 +189,12 @@ void slideCompose(int p) {
 void slideCommit() {
   const size_t BYTES = (size_t)LCD_WIDTH * LCD_HEIGHT * 2;
   sliding = false; dragging = false;
+  // The ride information page owns a short diagnostic stream while it is
+  // visible.  This keeps the page useful when the user operates the round
+  // screen without first opening the phone's advanced settings.  A stream
+  // enabled elsewhere remains owned by that caller.
+  if (page == 3 && dragTarget != 3) rideInfoPageLeave();
+  if (page != 3 && dragTarget == 3) rideInfoPageEnter();
   page = dragTarget;
   pageAt = millis();
   memcpy(gfx->getFramebuffer(), slideNew, BYTES);
