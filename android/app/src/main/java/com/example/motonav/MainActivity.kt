@@ -158,9 +158,10 @@ import java.io.File
  *   v8.3.47  微信无直接接听动作时不再把打开来电页当作可接听；诊断显示直接接口与当前路径。
  *   v8.3.48  事故安全原型进入 IMU 诊断测试版；只采样和记录，未启用事故判定或联系人通知。
  *   v8.3.50  修复圆屏 OTA 发现更新后“更新至…”按钮沿用上次禁用状态的问题。
+ *   v8.3.51  诊断页显示 QMI8658 原始三轴和 IMU 健康摘要，便于确认安装方向与采样连续性。
  *         普通电话灵动岛改为单张卡片（配合固件 v7.12.9-nav.6；测试版固件为 v7.12.9-nav.7-imu-test）。
  */
-const val APP_VERSION = "v8.3.50"
+const val APP_VERSION = "v8.3.51"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -1680,12 +1681,22 @@ class MainActivity : AppCompatActivity() {
             val sampleText = if (sample == null) "暂无样本" else
                 "最近样本：板端 ${sample.boardMillis} ms，接收 ${sample.receivedAtMonotonicMs} ms，" +
                     "加速度 %.2f m/s²，角速度 %.1f °/s，温度 %.1f°C".format(
-                        sample.accelerationMagnitudeMps2(), sample.gyroMagnitudeDegPerSec(), sample.temperatureC)
+                        sample.accelerationMagnitudeMps2(), sample.gyroMagnitudeDegPerSec(), sample.temperatureC) +
+                    "\n三轴加速度 [%.3f, %.3f, %.3f] m/s²，三轴角速度 [%.2f, %.2f, %.2f] °/s".format(
+                        sample.accelerationXMps2, sample.accelerationYMps2, sample.accelerationZMps2,
+                        sample.gyroXDegPerSec, sample.gyroYDegPerSec, sample.gyroZDegPerSec)
+            val health = BleLink.screenImuHealth
+            val healthText = if (health == null) "" else
+                "\n健康摘要：样本 ${health.samples} · 读错 ${health.readErrors} · 缺口 ${health.sampleGaps} · " +
+                    "重力正常 ${health.gravityInRange} / 超范围 ${health.gravityOutOfRange} · " +
+                    "静止样本 ${health.stillLike} · 饱和 a/g ${health.accelSaturated}/${health.gyroSaturated} · " +
+                    "间隔 ${health.intervalMinMs}–${health.intervalMaxMs} ms · 环 ${health.ringCount}/64"
             imuInfo.text = "地址 $address · 存在 ${if (BleLink.screenImuPresent) "是" else "否"} · " +
                 "自检 $selfTest · 配置 ${if (BleLink.screenImuConfigured) "完成" else "未完成"} · " +
                 "采样 ${if (BleLink.screenImuStreamEnabled) "开启" else "关闭"} · " +
                 "累计 ${BleLink.screenImuSampleCount} · 读错 ${if (BleLink.screenImuReadErrors < 0) "未知" else BleLink.screenImuReadErrors}\n" +
                 sampleText +
+                healthText +
                 (if (BleLink.screenImuStatus.isNotEmpty()) "\n原始状态：${BleLink.screenImuStatus}" else "")
         }
         card.addView(divider(top = 8))
