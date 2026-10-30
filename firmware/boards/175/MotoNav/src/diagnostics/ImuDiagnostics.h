@@ -10,6 +10,46 @@
 #if MOTONAV_IMU_DIAGNOSTICS
 
 #include <ImuDrv.hpp>
+#include <math.h>
+
+// The diagnostic image keeps a small, fixed-size summary ring.  It is not an
+// accident detector and it is never used to change navigation state.  Keeping
+// only quantised magnitudes makes the memory cost bounded and avoids retaining
+// a raw motion recording in the firmware process.
+static constexpr uint8_t IMU_DIAG_RING_SIZE = 64;
+static constexpr uint32_t IMU_DIAG_GAP_MS = 30;
+static constexpr float IMU_DIAG_GRAVITY_MIN = 7.5f;
+static constexpr float IMU_DIAG_GRAVITY_MAX = 12.5f;
+static constexpr float IMU_DIAG_STILL_GRAVITY_MIN = 8.5f;
+static constexpr float IMU_DIAG_STILL_GRAVITY_MAX = 10.8f;
+static constexpr float IMU_DIAG_STILL_GYRO_MAX = 8.0f;
+
+enum ImuDiagnosticSummaryFlags : uint8_t {
+  IMU_DIAG_GRAVITY_OUT = 1 << 0,
+  IMU_DIAG_ACCEL_SATURATED = 1 << 1,
+  IMU_DIAG_GYRO_SATURATED = 1 << 2,
+  IMU_DIAG_SAMPLE_GAP = 1 << 3,
+  IMU_DIAG_STILL_LIKE = 1 << 4,
+};
+
+struct ImuDiagnosticSummary {
+  uint32_t boardMillis;
+  uint16_t accelMagnitudeCenti;  // m/s2 * 100, clamped to uint16_t
+  uint16_t gyroMagnitudeDeci;    // dps * 10, clamped to uint16_t
+  uint16_t jerkCenti;             // m/s3 * 100, clamped to uint16_t
+  uint8_t flags;
+};
+
+inline uint16_t imuDiagnosticQuantize(float value, float scale) {
+  if (!isfinite(value) || value <= 0.0f) return 0;
+  const float scaled = value * scale;
+  if (scaled >= 65535.0f) return 65535;
+  return static_cast<uint16_t>(scaled + 0.5f);
+}
+
+inline bool imuDiagnosticRawSaturated(int16_t value) {
+  return value >= 32700 || value <= -32700;
+}
 
 // This module only probes/configures the sensor and prints samples to Serial.
 // It never scores an event, changes the navigation state, or sends BLE data.
@@ -29,14 +69,132 @@ struct ImuDiagnosticsState {
   uint32_t lastSampleAt = 0;
   uint32_t lastSummaryAt = 0;
   uint32_t lastNotifyAt = 0;
+  uint32_t lastHealthNotifyAt = 0;
   bool streamEnabled = false;
   bool statusPending = false;
   float ax = NAN, ay = NAN, az = NAN;
   float gx = NAN, gy = NAN, gz = NAN;
   float temperature = NAN;
+
+  // Health counters are diagnostic evidence only.  None of these counters
+  // arms, scores, or escalates an accident event.
+  uint32_t sampleGaps = 0;
+  uint32_t gravityInRange = 0;
+  uint32_t gravityOutOfRange = 0;
+  uint32_t stillLike = 0;
+  uint32_t accelSaturated = 0;
+  uint32_t gyroSaturated = 0;
+  uint32_t intervalMinMs = 0;
+  uint32_t intervalMaxMs = 0;
+  uint32_t lastGoodSampleAt = 0;
+  bool havePreviousSample = false;
+  float lastAccelMagnitude = NAN;
+  bool havePreviousMagnitude = false;
+  uint16_t ringHead = 0;
+  uint16_t ringCount = 0;
+  ImuDiagnosticSummary ring[IMU_DIAG_RING_SIZE] = {};
 };
 
 ImuDiagnosticsState imuDiagnostics;
+
+inline void recordImuDiagnosticSample(uint32_t now,
+                                      const AccelerometerData &accel,
+                                      const GyroscopeData &gyro) {
+  const float accelMagnitude = sqrtf(
+      accel.mps2.x * accel.mps2.x + accel.mps2.y * accel.mps2.y +
+      accel.mps2.z * accel.mps2.z);
+  const float gyroMagnitude = sqrtf(
+      gyro.dps.x * gyro.dps.x + gyro.dps.y * gyro.dps.y +
+      gyro.dps.z * gyro.dps.z);
+  const bool gravityOk = isfinite(accelMagnitude) &&
+                         accelMagnitude >= IMU_DIAG_GRAVITY_MIN &&
+                         accelMagnitude <= IMU_DIAG_GRAVITY_MAX;
+  const bool stillLike = isfinite(accelMagnitude) && isfinite(gyroMagnitude) &&
+                         accelMagnitude >= IMU_DIAG_STILL_GRAVITY_MIN &&
+                         accelMagnitude <= IMU_DIAG_STILL_GRAVITY_MAX &&
+                         gyroMagnitude <= IMU_DIAG_STILL_GYRO_MAX;
+  const bool accelSaturated = imuDiagnosticRawSaturated(accel.raw.x) ||
+                              imuDiagnosticRawSaturated(accel.raw.y) ||
+                              imuDiagnosticRawSaturated(accel.raw.z);
+  const bool gyroSaturated = imuDiagnosticRawSaturated(gyro.raw.x) ||
+                             imuDiagnosticRawSaturated(gyro.raw.y) ||
+                             imuDiagnosticRawSaturated(gyro.raw.z);
+
+  uint32_t intervalMs = 0;
+  bool sampleGap = false;
+  if (imuDiagnostics.havePreviousSample) {
+    intervalMs = now - imuDiagnostics.lastGoodSampleAt;
+    sampleGap = intervalMs > IMU_DIAG_GAP_MS;
+    if (imuDiagnostics.intervalMinMs == 0 ||
+        intervalMs < imuDiagnostics.intervalMinMs) {
+      imuDiagnostics.intervalMinMs = intervalMs;
+    }
+    if (intervalMs > imuDiagnostics.intervalMaxMs) {
+      imuDiagnostics.intervalMaxMs = intervalMs;
+    }
+    if (sampleGap) ++imuDiagnostics.sampleGaps;
+  }
+  imuDiagnostics.havePreviousSample = true;
+  imuDiagnostics.lastGoodSampleAt = now;
+
+  float jerk = 0.0f;
+  if (imuDiagnostics.havePreviousMagnitude && intervalMs > 0 &&
+      isfinite(imuDiagnostics.lastAccelMagnitude) &&
+      isfinite(accelMagnitude)) {
+    jerk = fabsf(accelMagnitude - imuDiagnostics.lastAccelMagnitude) /
+           (intervalMs / 1000.0f);
+  }
+  imuDiagnostics.lastAccelMagnitude = accelMagnitude;
+  imuDiagnostics.havePreviousMagnitude = true;
+
+  if (gravityOk) ++imuDiagnostics.gravityInRange;
+  else ++imuDiagnostics.gravityOutOfRange;
+  if (stillLike) ++imuDiagnostics.stillLike;
+  if (accelSaturated) ++imuDiagnostics.accelSaturated;
+  if (gyroSaturated) ++imuDiagnostics.gyroSaturated;
+
+  ImuDiagnosticSummary &entry = imuDiagnostics.ring[imuDiagnostics.ringHead];
+  entry.boardMillis = now;
+  entry.accelMagnitudeCenti = imuDiagnosticQuantize(accelMagnitude, 100.0f);
+  entry.gyroMagnitudeDeci = imuDiagnosticQuantize(gyroMagnitude, 10.0f);
+  entry.jerkCenti = imuDiagnosticQuantize(jerk, 100.0f);
+  entry.flags = 0;
+  if (!gravityOk) entry.flags |= IMU_DIAG_GRAVITY_OUT;
+  if (accelSaturated) entry.flags |= IMU_DIAG_ACCEL_SATURATED;
+  if (gyroSaturated) entry.flags |= IMU_DIAG_GYRO_SATURATED;
+  if (sampleGap) entry.flags |= IMU_DIAG_SAMPLE_GAP;
+  if (stillLike) entry.flags |= IMU_DIAG_STILL_LIKE;
+  imuDiagnostics.ringHead = (imuDiagnostics.ringHead + 1) % IMU_DIAG_RING_SIZE;
+  if (imuDiagnostics.ringCount < IMU_DIAG_RING_SIZE) ++imuDiagnostics.ringCount;
+}
+
+inline int formatImuDiagnosticHealth(char *out, size_t capacity) {
+  if (!out || capacity == 0) return -1;
+  const float accelMagnitude = imuDiagnostics.havePreviousMagnitude &&
+                                       isfinite(imuDiagnostics.lastAccelMagnitude)
+                                   ? imuDiagnostics.lastAccelMagnitude
+                                   : 0.0f;
+  const float gyroMagnitude =
+      sqrtf(imuDiagnostics.gx * imuDiagnostics.gx +
+            imuDiagnostics.gy * imuDiagnostics.gy +
+            imuDiagnostics.gz * imuDiagnostics.gz);
+  return snprintf(
+      out, capacity,
+      "IMU,HEALTH,1,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%u,%u,%u",
+      static_cast<unsigned long>(imuDiagnostics.samples),
+      static_cast<unsigned long>(imuDiagnostics.readErrors),
+      static_cast<unsigned long>(imuDiagnostics.sampleGaps),
+      static_cast<unsigned long>(imuDiagnostics.gravityInRange),
+      static_cast<unsigned long>(imuDiagnostics.gravityOutOfRange),
+      static_cast<unsigned long>(imuDiagnostics.stillLike),
+      static_cast<unsigned long>(imuDiagnostics.accelSaturated),
+      static_cast<unsigned long>(imuDiagnostics.gyroSaturated),
+      static_cast<unsigned long>(imuDiagnostics.intervalMinMs),
+      static_cast<unsigned long>(imuDiagnostics.intervalMaxMs),
+      static_cast<unsigned int>(imuDiagnostics.ringCount),
+      static_cast<unsigned int>(imuDiagnosticQuantize(accelMagnitude, 100.0f)),
+      static_cast<unsigned int>(imuDiagnosticQuantize(gyroMagnitude, 10.0f)));
+}
 
 inline void initImuDiagnostics() {
   if (imuDiagnostics.beginAttempted) return;
@@ -128,12 +286,15 @@ inline void imuDiagnosticsTick() {
   GyroscopeData gyro;
   const bool accelOk = imuDiagnostics.sensor.readAccel(accel);
   const bool gyroOk = imuDiagnostics.sensor.readGyro(gyro);
-  imuDiagnostics.lastSampleAt = now;
-  if (!accelOk || !gyroOk) {
+  if (!accelOk || !gyroOk || !isfinite(accel.mps2.x) ||
+      !isfinite(accel.mps2.y) || !isfinite(accel.mps2.z) ||
+      !isfinite(gyro.dps.x) || !isfinite(gyro.dps.y) ||
+      !isfinite(gyro.dps.z) || !isfinite(accel.temperature)) {
     ++imuDiagnostics.readErrors;
     return;
   }
 
+  imuDiagnostics.lastSampleAt = now;
   imuDiagnostics.ax = accel.mps2.x;
   imuDiagnostics.ay = accel.mps2.y;
   imuDiagnostics.az = accel.mps2.z;
@@ -141,6 +302,7 @@ inline void imuDiagnosticsTick() {
   imuDiagnostics.gy = gyro.dps.y;
   imuDiagnostics.gz = gyro.dps.z;
   imuDiagnostics.temperature = accel.temperature;
+  recordImuDiagnosticSample(now, accel, gyro);
   ++imuDiagnostics.samples;
 
   // CSV is intentionally serial-only.  Do not add it to the BLE protocol or
@@ -197,7 +359,32 @@ inline void imuDiagnosticsNotifyTick() {
       txChar->setValue((uint8_t *)status, static_cast<size_t>(n));
       txChar->notify();
     }
+
+    // Keep the legacy STATUS frame byte-for-byte compatible.  Health counters
+    // are sent as a separate, versioned frame so older apps can continue to
+    // parse STATUS while newer apps opt into the diagnostic summary.
+    char health[192];
+    const int healthN = formatImuDiagnosticHealth(health, sizeof(health));
+    if (healthN > 0 && static_cast<size_t>(healthN) < sizeof(health)) {
+      txChar->setValue((uint8_t *)health, static_cast<size_t>(healthN));
+      txChar->notify();
+      imuDiagnostics.lastHealthNotifyAt = now;
+    }
     imuDiagnostics.statusPending = false;
+  }
+
+  // A stream session receives a low-rate health snapshot in addition to the
+  // existing sample stream.  This is deliberately much slower than samples
+  // to keep navigation notifications and the BLE connection unaffected.
+  if (imuDiagnostics.streamEnabled && imuDiagnostics.samples > 0 &&
+      now - imuDiagnostics.lastHealthNotifyAt >= 1000) {
+    char health[192];
+    const int healthN = formatImuDiagnosticHealth(health, sizeof(health));
+    if (healthN > 0 && static_cast<size_t>(healthN) < sizeof(health)) {
+      txChar->setValue((uint8_t *)health, static_cast<size_t>(healthN));
+      txChar->notify();
+      imuDiagnostics.lastHealthNotifyAt = now;
+    }
   }
 
   // Sampling notifications are explicitly opt-in and throttled so they never

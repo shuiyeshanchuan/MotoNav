@@ -70,6 +70,37 @@ public final class AccidentImuSampleParserTest {
                     "read errors were ignored");
         });
 
+        test("versioned health summary parses with strict counters", () -> {
+            AccidentImuSampleParser.Frame frame = AccidentImuSampleParser.parse(
+                    "IMU,HEALTH,1,42,0,1,40,2,12,0,0,9,12,42,970,35", 2000L);
+            require(frame instanceof AccidentImuSampleParser.Health, "health frame was rejected");
+            AccidentImuSampleParser.Health health = (AccidentImuSampleParser.Health) frame;
+            require(health.version == 1 && health.samples == 42 && health.sampleGaps == 1,
+                    "health counters changed");
+            require(health.ringCount == 42 && health.accelerationMagnitudeCenti == 970 &&
+                            health.gyroMagnitudeDeci == 35 && health.receivedAtMonotonicMs == 2000,
+                    "health quantised values changed");
+            require(health.usableForRecording(), "healthy summary was not usable for recording");
+        });
+
+        test("health summary rejects unknown versions, overflow and inconsistent counts", () -> {
+            require(AccidentImuSampleParser.parse(
+                    "IMU,HEALTH,2,42,0,1,40,2,12,0,0,9,12,42,970,35", 2000L) == null,
+                    "unknown health version was accepted");
+            require(AccidentImuSampleParser.parse(
+                    "IMU,HEALTH,1,42,0,1,40,2,12,0,0,9,12,65,970,35", 2000L) == null,
+                    "oversized ring count was accepted");
+            require(AccidentImuSampleParser.parse(
+                    "IMU,HEALTH,1,42,0,1,40,5,12,0,0,9,12,42,970,35", 2000L) == null,
+                    "inconsistent gravity counters were accepted");
+            require(AccidentImuSampleParser.parse(
+                    "IMU,HEALTH,1,42,0,1,40,2,12,0,0,13,12,42,970,35", 2000L) == null,
+                    "reversed interval bounds were accepted");
+            require(AccidentImuSampleParser.parse(
+                    "IMU,HEALTH,1,42,0,1,40,2,12,0,0,9,12,42,970,35,extra", 2000L) == null,
+                    "extra health fields were accepted");
+        });
+
         test("malformed and unrelated frames are ignored", () -> {
             require(AccidentImuSampleParser.parse("IMU,1,2,3", 1000L) == null,
                     "short sample was accepted");

@@ -17,6 +17,71 @@ public final class AccidentImuSampleParser {
         private Frame() {}
     }
 
+    /**
+     * Versioned, quantised health summary emitted by the diagnostic firmware.
+     * It is evidence for P1 recording only; it is not an accident verdict.
+     *
+     * <p>Wire format (version 1):
+     * {@code IMU,HEALTH,1,samples,readErrors,sampleGaps,gravityInRange,
+     * gravityOutOfRange,stillLike,accelSaturated,gyroSaturated,intervalMinMs,
+     * intervalMaxMs,ringCount,accelMagnitudeCenti,gyroMagnitudeDeci}.</p>
+     */
+    public static final class Health extends Frame {
+        public final int version;
+        public final long samples;
+        public final long readErrors;
+        public final long sampleGaps;
+        public final long gravityInRange;
+        public final long gravityOutOfRange;
+        public final long stillLike;
+        public final long accelSaturated;
+        public final long gyroSaturated;
+        public final long intervalMinMs;
+        public final long intervalMaxMs;
+        public final int ringCount;
+        public final int accelerationMagnitudeCenti;
+        public final int gyroMagnitudeDeci;
+        public final long receivedAtMonotonicMs;
+
+        private Health(
+                int version,
+                long samples,
+                long readErrors,
+                long sampleGaps,
+                long gravityInRange,
+                long gravityOutOfRange,
+                long stillLike,
+                long accelSaturated,
+                long gyroSaturated,
+                long intervalMinMs,
+                long intervalMaxMs,
+                int ringCount,
+                int accelerationMagnitudeCenti,
+                int gyroMagnitudeDeci,
+                long receivedAtMonotonicMs) {
+            this.version = version;
+            this.samples = samples;
+            this.readErrors = readErrors;
+            this.sampleGaps = sampleGaps;
+            this.gravityInRange = gravityInRange;
+            this.gravityOutOfRange = gravityOutOfRange;
+            this.stillLike = stillLike;
+            this.accelSaturated = accelSaturated;
+            this.gyroSaturated = gyroSaturated;
+            this.intervalMinMs = intervalMinMs;
+            this.intervalMaxMs = intervalMaxMs;
+            this.ringCount = ringCount;
+            this.accelerationMagnitudeCenti = accelerationMagnitudeCenti;
+            this.gyroMagnitudeDeci = gyroMagnitudeDeci;
+            this.receivedAtMonotonicMs = receivedAtMonotonicMs;
+        }
+
+        /** No safety gate is implied by a syntactically valid summary. */
+        public boolean usableForRecording() {
+            return version == 1 && samples > 0 && readErrors == 0 && ringCount > 0;
+        }
+    }
+
     public static final class Status extends Frame {
         /** I2C address reported by firmware, or -1 for the legacy frame. */
         public final int address;
@@ -139,6 +204,9 @@ public final class AccidentImuSampleParser {
                     (p.length == 10 && selfTest == null)) return null;
             return new Status(address, selfTest, present, configured, stream, samples, errors, last);
         }
+        if ("HEALTH".equals(p[1])) {
+            return parseHealth(p, receivedAtMonotonicMs);
+        }
         // BLE sample format: IMU,boardMillis,ax,ay,az,gx,gy,gz,temp
         if (p.length != 9) return null;
         Long boardMillis = nonNegativeLong(p[1]);
@@ -156,6 +224,38 @@ public final class AccidentImuSampleParser {
         return sample.finite() ? sample : null;
     }
 
+    private static Health parseHealth(String[] p, long receivedAtMonotonicMs) {
+        // IMU,HEALTH,version + 13 counters/quantised values.
+        if (p.length != 16) return null;
+        Integer version = boundedInt(p[2], 1, 1);
+        final long maxCounter = 0xFFFF_FFFFL; // firmware uint32_t
+        Long samples = boundedLong(p[3], 0, maxCounter);
+        Long readErrors = boundedLong(p[4], 0, maxCounter);
+        Long sampleGaps = boundedLong(p[5], 0, maxCounter);
+        Long gravityInRange = boundedLong(p[6], 0, maxCounter);
+        Long gravityOutOfRange = boundedLong(p[7], 0, maxCounter);
+        Long stillLike = boundedLong(p[8], 0, maxCounter);
+        Long accelSaturated = boundedLong(p[9], 0, maxCounter);
+        Long gyroSaturated = boundedLong(p[10], 0, maxCounter);
+        Long intervalMinMs = boundedLong(p[11], 0, 86_400_000L);
+        Long intervalMaxMs = boundedLong(p[12], 0, 86_400_000L);
+        Integer ringCount = boundedInt(p[13], 0, 64);
+        Integer accelerationMagnitudeCenti = boundedInt(p[14], 0, 65535);
+        Integer gyroMagnitudeDeci = boundedInt(p[15], 0, 65535);
+        if (version == null || samples == null || readErrors == null || sampleGaps == null ||
+                gravityInRange == null || gravityOutOfRange == null || stillLike == null ||
+                accelSaturated == null || gyroSaturated == null || intervalMinMs == null ||
+                intervalMaxMs == null || ringCount == null || accelerationMagnitudeCenti == null ||
+                gyroMagnitudeDeci == null || intervalMinMs > intervalMaxMs ||
+                gravityInRange + gravityOutOfRange > samples || sampleGaps > samples ||
+                stillLike > samples || accelSaturated > samples || gyroSaturated > samples ||
+                ringCount > samples) return null;
+        return new Health(version, samples, readErrors, sampleGaps, gravityInRange,
+                gravityOutOfRange, stillLike, accelSaturated, gyroSaturated,
+                intervalMinMs, intervalMaxMs, ringCount, accelerationMagnitudeCenti,
+                gyroMagnitudeDeci, receivedAtMonotonicMs);
+    }
+
     private static Boolean bool(String value) {
         if ("0".equals(value)) return Boolean.FALSE;
         if ("1".equals(value)) return Boolean.TRUE;
@@ -166,6 +266,24 @@ public final class AccidentImuSampleParser {
         try {
             long n = Long.parseLong(value);
             return n >= 0 ? n : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static Long boundedLong(String value, long min, long max) {
+        try {
+            long n = Long.parseLong(value);
+            return n >= min && n <= max ? n : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static Integer boundedInt(String value, int min, int max) {
+        try {
+            int n = Integer.parseInt(value);
+            return n >= min && n <= max ? n : null;
         } catch (RuntimeException e) {
             return null;
         }

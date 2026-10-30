@@ -109,6 +109,7 @@ object BleLink {
         phyText = "?"; burstStart = 0L
         screenImuStatus = ""
         screenImuSample = null
+        screenImuHealth = null
         screenImuSampleCount = 0L
         screenImuAddress = -1
         screenImuPresent = false
@@ -172,6 +173,7 @@ object BleLink {
     // later, separately reviewed safety monitor; they never trigger an alert.
     @Volatile var screenImuStatus = ""
     @Volatile var screenImuSample: AccidentImuSampleParser.Sample? = null
+    @Volatile var screenImuHealth: AccidentImuSampleParser.Health? = null
     @Volatile var screenImuSampleCount = 0L
     @Volatile var screenImuAddress = -1
     @Volatile var screenImuPresent = false
@@ -184,6 +186,8 @@ object BleLink {
     interface ImuListener {
         fun onImuStatus(status: AccidentImuSampleParser.Status)
         fun onImuSample(sample: AccidentImuSampleParser.Sample)
+        /** Optional P1 health summary; it never implies an incident decision. */
+        fun onImuHealth(health: AccidentImuSampleParser.Health) {}
     }
 
     @Volatile private var imuListener: ImuListener? = null
@@ -485,6 +489,11 @@ object BleLink {
                 screenImuSample = imu
                 screenImuSampleCount += 1L
                 imuListener?.let { listener -> runCatching { listener.onImuSample(imu) } }
+                return
+            }
+            is AccidentImuSampleParser.Health -> {
+                screenImuHealth = imu
+                imuListener?.let { listener -> runCatching { listener.onImuHealth(imu) } }
                 return
             }
             null -> Unit
