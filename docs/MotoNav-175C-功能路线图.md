@@ -8,7 +8,7 @@
 
 ### 1.1 当前发布版本与发布位置
 
-- Android App：当前测试版待发布 `v8.3.53`（`versionCode 155`）；上一测试版为 `v8.3.52`（`versionCode 154`，GitHub Release：`motonav-v8.3.52`），上一正式版为 `v8.3.47`（`versionCode 150`）。测试版使用正式 Release 条目以便 App 自更新发现，发布说明明确标注测试性质。
+- Android App：测试版已发布 `v8.3.53`（`versionCode 155`，GitHub Release：`motonav-v8.3.53`）；上一测试版为 `v8.3.52`（`versionCode 154`，GitHub Release：`motonav-v8.3.52`），上一正式版为 `v8.3.47`（`versionCode 150`）。测试版使用正式 Release 条目以便 App 自更新发现，发布说明明确标注测试性质。
 - 1.75C 固件：行驶信息页诊断测试版为 `v7.12.9-nav.9-ride-info-imu-test`（GitHub Release：`motonav-v8.3.52`）；上一诊断测试版为 `v7.12.9-nav.8-imu-test`，上一正式版为 `v7.12.9-nav.6`。测试固件的 `deviceTested=false`，不能视为稳定版。
 - 正式发布仓库：`shuiyeshanchuan/MotoNav`；App 和圆屏 OTA 均从这个仓库的非草稿、非预发布 Release 获取文件。
 - 1.75C 测试 Release 的 OTA 索引指向带 `diagnostic=true` 的 `v7.12.9-nav.9-ride-info-imu-test`；该版本包含第四个行驶信息页面并保留 QMI8658 诊断采样。OTA 只使用 `*_app_0x10000.bin`，`*_full_0x0.bin` 仅用于 USB 救援。当前版本仅做停车和安全场地观察，不能用于事故判定或联系人通知；返回 `nav.6` 需要手动 USB 救援，直到另行发布更高版本的稳定固件。
