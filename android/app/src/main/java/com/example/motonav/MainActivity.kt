@@ -156,9 +156,10 @@ import java.io.File
  *         配套圆屏固件 v7.12.9-nav.2 修复导航时电源菜单和地图重连过渡。
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  *   v8.3.47  微信无直接接听动作时不再把打开来电页当作可接听；诊断显示直接接口与当前路径。
- *         普通电话灵动岛改为单张卡片（配合固件 v7.12.9-nav.6）。
+ *   v8.3.48  事故安全原型进入 IMU 诊断测试版；只采样和记录，未启用事故判定或联系人通知。
+ *         普通电话灵动岛改为单张卡片（配合固件 v7.12.9-nav.6；测试版固件为 v7.12.9-nav.7-imu-test）。
  */
-const val APP_VERSION = "v8.3.47"
+const val APP_VERSION = "v8.3.48"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
