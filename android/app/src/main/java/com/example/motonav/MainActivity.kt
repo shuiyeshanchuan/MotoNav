@@ -157,9 +157,10 @@ import java.io.File
  *   v8.3.40  统一 App 页面配色和控件层级，收敛装饰图标，改善文字对比度与触控区域。
  *   v8.3.47  微信无直接接听动作时不再把打开来电页当作可接听；诊断显示直接接口与当前路径。
  *   v8.3.48  事故安全原型进入 IMU 诊断测试版；只采样和记录，未启用事故判定或联系人通知。
+ *   v8.3.50  修复圆屏 OTA 发现更新后“更新至…”按钮沿用上次禁用状态的问题。
  *         普通电话灵动岛改为单张卡片（配合固件 v7.12.9-nav.6；测试版固件为 v7.12.9-nav.7-imu-test）。
  */
-const val APP_VERSION = "v8.3.48"
+const val APP_VERSION = "v8.3.50"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -1301,7 +1302,12 @@ class MainActivity : AppCompatActivity() {
                                 append("\n\n本次升级会修复旧固件的 OTA 状态上报；完成后，后续更新可直接一键进行。")
                                 if (candidate.notes.isNotBlank()) append("\n\n").append(candidate.notes)
                             })
-                            onlineOtaUpdateButton?.apply { text = "更新至 ${candidate.version}"; visibility = View.VISIBLE }
+                            onlineOtaUpdateButton?.apply {
+                                text = "更新至 ${candidate.version}"
+                                isEnabled = true
+                                alpha = 1f
+                                visibility = View.VISIBLE
+                            }
                         }
                         current.isBlank() || !Regex("""^v\d+\.\d+\.\d+(?:[-._][A-Za-z0-9._-]+)?$""").matches(current) ->
                             setOtaStatus("还没有读到圆屏完整固件版本，请等待“设备”诊断信息完整后再检查")
@@ -1315,7 +1321,12 @@ class MainActivity : AppCompatActivity() {
                                 if (current.isNotBlank()) append("（当前 $current）")
                                 if (candidate.notes.isNotBlank()) append("\n\n").append(candidate.notes)
                             })
-                            onlineOtaUpdateButton?.apply { text = "更新至 ${candidate.version}"; visibility = View.VISIBLE }
+                            onlineOtaUpdateButton?.apply {
+                                text = "更新至 ${candidate.version}"
+                                isEnabled = true
+                                alpha = 1f
+                                visibility = View.VISIBLE
+                            }
                         }
                     }
                 }

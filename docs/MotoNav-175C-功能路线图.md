@@ -8,7 +8,7 @@
 
 ### 1.1 当前发布版本与发布位置
 
-- Android App：测试版已发布 `v8.3.48`（`versionCode 151`，GitHub Release：`motonav-v8.3.48`）；上一正式版为 `v8.3.47`（`versionCode 150`）。测试版使用正式 Release 条目以便 App 自更新发现，发布说明明确标注测试性质。
+- Android App：测试版已发布 `v8.3.50`（`versionCode 152`，GitHub Release：`motonav-v8.3.50`）；上一测试版为 `v8.3.48`（`versionCode 151`），上一正式版为 `v8.3.47`（`versionCode 150`）。测试版使用正式 Release 条目以便 App 自更新发现，发布说明明确标注测试性质。
 - 1.75C 固件：事故 IMU 诊断修正版为 `v7.12.9-nav.8-imu-test`（GitHub Release：`motonav-v8.3.49`）；上一诊断测试版为 `v7.12.9-nav.7-imu-test`，上一正式版为 `v7.12.9-nav.6`。测试固件的 `deviceTested=false`，不能视为稳定版。
 - 正式发布仓库：`shuiyeshanchuan/MotoNav`；App 和圆屏 OTA 均从这个仓库的非草稿、非预发布 Release 获取文件。
 - 1.75C 测试 Release 的 OTA 索引指向带 `diagnostic=true` 的 `v7.12.9-nav.8-imu-test`；该版本修正 QMI8658 自检等待时序。OTA 只使用 `*_app_0x10000.bin`，`*_full_0x0.bin` 仅用于 USB 救援。当前版本仅做停车诊断采样，不能用于事故判定或联系人通知；返回 `nav.6` 需要手动 USB 救援，直到另行发布更高版本的稳定固件。
@@ -43,6 +43,7 @@
 - `v8.3.47` / `v7.12.9-nav.6`：确认微信没有向本机通知提供 `EXTRA_ANSWER_INTENT`、可执行的微信通知动作或公开第三方接听接口；普通电话继续使用 Android Telecom，微信只有在当前页面已识别到明确接听控件时才显示圆屏接听，单纯打开微信来电页不再被标记为可接听。高级诊断增加“直接接口”和“当前路径”字段。普通电话灵动岛合并为单张卡片，修复双层边框和文字拥挤；Android 与固件构建、签名和校验已通过。
 - `v8.3.48` / `v7.12.9-nav.7-imu-test` 测试版：事故安全原型进入可 OTA 获取的诊断测试包。Android 保留只记录的 `AccidentSafetyModel` 及 JVM 回放测试；固件诊断构建探测 QMI8658、执行自检并输出加速度/陀螺仪样本。测试包默认不启动事故判定、联系人、短信、拨号或自动通知，manifest 保持 `diagnostic=true`、`deviceTested=false`。实机检查发现自检失败，待修正版复测。
 - `v7.12.9-nav.8-imu-test`（`motonav-v8.3.49`）测试固件：修正诊断自检等待时序。QMI8658 自检必须等到数据就绪和清除完成后再读取，避免把过早读取误判为失败；该修正版仍保持 `diagnostic=true`、`deviceTested=false`，不启动事故判定或联系人通知。
+- `v8.3.50` App 测试版：修复检查到圆屏固件更新后，更新按钮仍沿用检查过程中的禁用状态而显示灰色、无法点击的问题；发现候选版本时会恢复按钮可用状态。
 
 ### 1.3 已实现但仍需实机确认
 
@@ -421,7 +422,7 @@
 
 - [x] 1.75C 固件目标、32MB Flash、`app5M_fat24M_32MB` 分区和 OTA 双分区编译通过。
 - [x] 固件 manifest、应用镜像/完整镜像大小和 SHA-256 静态校验通过。
-- [x] Android release APK 构建通过，包名自动读取 `personal.properties`；当前已发布测试版为 `8.3.48`（versionCode 151），上一正式版为 `8.3.47`。
+- [x] Android release APK 构建通过，包名自动读取 `personal.properties`；当前已发布测试版为 `8.3.50`（versionCode 152），上一测试版为 `8.3.48`，上一正式版为 `8.3.47`。
 - [x] Android release APK 签名校验通过，并提供 `android/verify-release.ps1` 发布前检查脚本。
 - [x] 高德平台登记使用当前发布版 SHA1：`49:7D:D6:15:13:34:EA:38:CD:C1:0A:7C:EB:C2:57:42:FE:85:B8:5C`。
 - [x] OTA 正式非对称签名：私钥仅保存于 `D:\Configrition\MotoNav-ota-private.pem`，固件嵌入对应公钥，Android 和固件均拒绝缺少或验签失败的 OTA manifest。
@@ -430,7 +431,7 @@
 
 当前剩余优先级：
 
-1. 用真实手机安装当前测试版 `v8.3.48`，验证微信通知的直接接口诊断和无障碍接听控件识别、圆屏长按后的实际通话状态，并回归微信消息、普通电话、弱 GPS 起图和巡航定位。圆屏测试固件使用 `v7.12.9-nav.8-imu-test`；继续验证 0.5 秒微信岛按住阈值、方向轮盘、任意方向下三页横滑循环和重连后设置重发。
+1. 用真实手机安装当前测试版 `v8.3.50`，验证微信通知的直接接口诊断和无障碍接听控件识别、圆屏长按后的实际通话状态，并回归微信消息、普通电话、弱 GPS 起图和巡航定位。圆屏测试固件使用 `v7.12.9-nav.8-imu-test`；继续验证 0.5 秒微信岛按住阈值、方向轮盘、任意方向下三页横滑循环和重连后设置重发。
 2. 按 [读秒接入方案](TRAFFIC-LIGHT-COUNTDOWN-175C.md) 向高德确认 AIoT Link 的摩托车圆屏授权、`type=12/13` 完整字段和 SDK；取得后先做真实手机接收验证，再接入现有 BLE 灯协议。
 3. 在真实导航与模拟回放中检查停车/弱定位、断网沿用路线、偏航重算、路线模式、车道/箭头/环/大字模式、超速/安全提示 30 秒过期和无数据状态。
 4. 验证普通电话隐私模式、微信电话和消息通知岛、音频焦点与音乐恢复、锁屏和耳机；同时回归 PWR 菜单与地图重连过渡。
