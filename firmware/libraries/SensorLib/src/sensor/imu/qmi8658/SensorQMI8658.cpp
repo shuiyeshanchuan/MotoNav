@@ -2325,24 +2325,42 @@ bool SensorQMI8658::hardwareSelfTest(bool includeAccel, bool includeGyro)
     if (includeAccel) {
         writeReg(REG_CTRL2, static_cast<uint8_t>((ACCEL_RANGE_8G << 4) | ACCEL_ODR_224_2HZ | 0x80));
 
-        uint8_t retry = 50;
+        // The datasheet specifies roughly 25 ODR periods before the
+        // accelerometer self-test result is ready.  At 224.2 Hz that is
+        // about 112 ms; the old 50 x 1 ms loop could read the result too
+        // early and report a false failure on an otherwise healthy sensor.
+        bool self_test_ready = false;
+        uint16_t retry = 150;
         while (retry-- > 0) {
             uint8_t status = readReg(REG_STATUS_INT);
             if (status != 0xFF && (status & MASK_INT_AVAIL)) {
+                self_test_ready = true;
                 break;
             }
-            hal->delay(1);
+            hal->delay(2);
+        }
+        if (!self_test_ready) {
+            if (accel_en) enableAccel();
+            if (gyro_en) enableGyro();
+            return false;
         }
 
         writeReg(REG_CTRL2, static_cast<uint8_t>((ACCEL_RANGE_8G << 4) | ACCEL_ODR_224_2HZ));
 
-        retry = 50;
+        self_test_ready = false;
+        retry = 100;
         while (retry-- > 0) {
             uint8_t status = readReg(REG_STATUS_INT);
             if (status != 0xFF && !(status & MASK_INT_AVAIL)) {
+                self_test_ready = true;
                 break;
             }
-            hal->delay(1);
+            hal->delay(2);
+        }
+        if (!self_test_ready) {
+            if (accel_en) enableAccel();
+            if (gyro_en) enableGyro();
+            return false;
         }
 
         uint8_t reg_data[6];
@@ -2374,24 +2392,41 @@ bool SensorQMI8658::hardwareSelfTest(bool includeAccel, bool includeGyro)
     if (includeGyro) {
         writeReg(REG_CTRL3, static_cast<uint8_t>((GYRO_RANGE_1024DPS << 4) | GYRO_ODR_224_2HZ | 0x80));
 
-        uint8_t retry = 50;
+        // The gyroscope self-test is specified as roughly 400 ms.  Give the
+        // device a bounded 500 ms window and require the ready edge before
+        // reading the result.
+        bool self_test_ready = false;
+        uint16_t retry = 250;
         while (retry-- > 0) {
             uint8_t status = readReg(REG_STATUS_INT);
             if (status != 0xFF && (status & MASK_INT_AVAIL)) {
+                self_test_ready = true;
                 break;
             }
-            hal->delay(1);
+            hal->delay(2);
+        }
+        if (!self_test_ready) {
+            if (accel_en) enableAccel();
+            if (gyro_en) enableGyro();
+            return false;
         }
 
         writeReg(REG_CTRL3, static_cast<uint8_t>((GYRO_RANGE_1024DPS << 4) | GYRO_ODR_224_2HZ));
 
-        retry = 50;
+        self_test_ready = false;
+        retry = 100;
         while (retry-- > 0) {
             uint8_t status = readReg(REG_STATUS_INT);
             if (status != 0xFF && !(status & MASK_INT_AVAIL)) {
+                self_test_ready = true;
                 break;
             }
-            hal->delay(1);
+            hal->delay(2);
+        }
+        if (!self_test_ready) {
+            if (accel_en) enableAccel();
+            if (gyro_en) enableGyro();
+            return false;
         }
 
         uint8_t reg_data[6];
