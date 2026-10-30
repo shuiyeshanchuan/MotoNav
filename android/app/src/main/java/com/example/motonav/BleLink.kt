@@ -64,7 +64,7 @@ object BleLink {
     private const val SCAN_TIMEOUT_MS = 15000L
     private const val PREFER_MS = 4000L          // v7.8 先等上次那块圆屏这么久
     private const val HEARTBEAT_MS = 2000L
-    private const val MAX_WRITE = 500          // 圆屏单个数据包最多收 512 字节，留点余量
+    private const val MAX_WRITE = 512          // 固件 RXQ_MAX=512；签名 BEGIN 包需要约 504 字节
     private const val IMG_HEADER = 10
     private const val OTA_HEADER = 12
     private const val OTA_PAYLOAD_MAX = 488
@@ -105,6 +105,8 @@ object BleLink {
         gatt = null
         old?.let { session.clear(it) }
         ready = false; verified = false; buildingsSupported = false
+        handler.removeCallbacks(mtuRetry)
+        mtuRetryCount = 0
         capabilityQuerySent = false; rxChar = null; otaRxChar = null; otaTxChar = null; mtu = 23
         phyText = "?"; burstStart = 0L
         screenImuStatus = ""
@@ -138,8 +140,26 @@ object BleLink {
     private var auto = false
     private val handler = Handler(Looper.getMainLooper())
 
+    private const val TARGET_MTU = 517
+    private const val MTU_RETRY_LIMIT = 4
+    private const val MTU_RETRY_DELAY_MS = 350L
     @Volatile var mtu = 23
     @Volatile private var ready = false        // 服务和大数据包都协商好了，可以发送
+    private var mtuRetryCount = 0
+    private val mtuRetry = object : Runnable {
+        override fun run() {
+            val g = gatt
+            if (g == null || !ready || !verified || !session.owns(g) || mtu >= TARGET_MTU ||
+                mtuRetryCount >= MTU_RETRY_LIMIT) return
+            mtuRetryCount++
+            val accepted = try { g.requestMtu(TARGET_MTU) } catch (_: Exception) { false }
+            // Some Android stacks report a transient busy result. Keep a small,
+            // bounded retry window; onMtuChanged cancels it once the target is met.
+            if (mtu < TARGET_MTU && mtuRetryCount < MTU_RETRY_LIMIT) {
+                handler.postDelayed(this, if (accepted) 700L else MTU_RETRY_DELAY_MS)
+            }
+        }
+    }
 
     // ---- 发送队列 ----
     private class Out(val key: String?, var data: ByteArray)
@@ -464,7 +484,18 @@ object BleLink {
             sendEvent("#HM,0")
             send("#BLE?")
             send("#OTA?")
+            // MTU negotiation can complete with the fallback 23-byte value
+            // while the pairing dialog is still open.  Retry after the link is
+            // authenticated so the signed BEGIN control packet can fit.
+            scheduleMtuRetry(g, 150L)
         }
+    }
+
+    private fun scheduleMtuRetry(g: BluetoothGatt, delayMs: Long = MTU_RETRY_DELAY_MS) {
+        if (!ready || !verified || gatt !== g || !session.owns(g) || mtu >= TARGET_MTU ||
+            mtuRetryCount >= MTU_RETRY_LIMIT) return
+        handler.removeCallbacks(mtuRetry)
+        handler.postDelayed(mtuRetry, delayMs)
     }
 
     private fun onNotify(bytes: ByteArray?) {
@@ -723,8 +754,15 @@ object BleLink {
         catch (_: IllegalArgumentException) { listener.onFinished(false, "OTA 签名不是 Base64"); return false }
         if (signature.size != 256) { listener.onFinished(false, "OTA 签名长度错误"); return false }
         val begin = "#OTA,BEGIN,$board,$version,${image.size},$expected,$signatureAlgorithm,$signatureKeyId,$signatureBase64"
-        if (begin.toByteArray(Charsets.UTF_8).size > maxWrite()) {
-            listener.onFinished(false, "手机蓝牙数据包不足以发送 OTA 签名"); return false
+        val beginBytes = begin.toByteArray(Charsets.UTF_8).size
+        val available = maxWrite()
+        if (beginBytes > available) {
+            gatt?.let {
+                mtuRetryCount = 0
+                scheduleMtuRetry(it, 0L)
+            }
+            listener.onFinished(false, "蓝牙数据包不足（当前 ${available} 字节，需要至少 ${beginBytes} 字节）；已重新协商，请稍后重试")
+            return false
         }
         otaListener = listener; otaImage = image.copyOf(); otaExpectedSha = expected; otaSeq = 0; otaOffset = 0
         otaWriteInFlight = false; otaAckPending = false; otaEndSent = false; otaReady = false; otaRetries = 0
@@ -795,6 +833,12 @@ object BleLink {
                 g.setPreferredPhy(BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_OPTION_NO_PREFERRED)
             } catch (_: Exception) {}
             if (session.phase() == Phase.MTU) onLinkReady(g)
+            if (ready && verified) {
+                if (mtu >= TARGET_MTU) {
+                    mtuRetryCount = 0
+                    handler.removeCallbacks(mtuRetry)
+                } else scheduleMtuRetry(g)
+            }
         }
 
         override fun onPhyUpdate(g: BluetoothGatt, txPhy: Int, rxPhy: Int, st: Int) = onCurrent(g) {
@@ -874,6 +918,7 @@ object BleLink {
         send("#INFO?")
         send("#OTA?")
         if (verified) resendAll()
+        if (verified) scheduleMtuRetry(g, 150L)
     }
 
     /** 补发最近的全部状态、图片、地图（连上时 / v6.4 配对验证通过时） */

@@ -7,3 +7,11 @@ New-Item -ItemType Directory -Force $classes | Out-Null
 if($LASTEXITCODE -ne 0){throw 'BLE tests compile failed'}
 & (Join-Path $taskJdk 'bin/java.exe') -cp $classes com.example.motonav.BleSessionTest
 if($LASTEXITCODE -ne 0){throw 'BLE tests failed'}
+
+$otaClasses=Join-Path $PSScriptRoot '.local/ota-tests'
+New-Item -ItemType Directory -Force $otaClasses | Out-Null
+& (Join-Path $taskJdk 'bin/javac.exe') -encoding UTF-8 -d $otaClasses `
+    (Join-Path $PSScriptRoot 'tests/ota/com/example/motonav/OtaBeginSizingTest.java')
+if($LASTEXITCODE -ne 0){throw 'OTA sizing test compile failed'}
+& (Join-Path $taskJdk 'bin/java.exe') -cp $otaClasses com.example.motonav.OtaBeginSizingTest
+if($LASTEXITCODE -ne 0){throw 'OTA sizing tests failed'}

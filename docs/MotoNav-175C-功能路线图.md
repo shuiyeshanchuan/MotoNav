@@ -8,7 +8,7 @@
 
 ### 1.1 当前发布版本与发布位置
 
-- Android App：测试版已发布 `v8.3.52`（`versionCode 154`，GitHub Release：`motonav-v8.3.52`）；上一测试版为 `v8.3.51`（`versionCode 153`），上一正式版为 `v8.3.47`（`versionCode 150`）。测试版使用正式 Release 条目以便 App 自更新发现，发布说明明确标注测试性质。
+- Android App：当前测试版待发布 `v8.3.53`（`versionCode 155`）；上一测试版为 `v8.3.52`（`versionCode 154`，GitHub Release：`motonav-v8.3.52`），上一正式版为 `v8.3.47`（`versionCode 150`）。测试版使用正式 Release 条目以便 App 自更新发现，发布说明明确标注测试性质。
 - 1.75C 固件：行驶信息页诊断测试版为 `v7.12.9-nav.9-ride-info-imu-test`（GitHub Release：`motonav-v8.3.52`）；上一诊断测试版为 `v7.12.9-nav.8-imu-test`，上一正式版为 `v7.12.9-nav.6`。测试固件的 `deviceTested=false`，不能视为稳定版。
 - 正式发布仓库：`shuiyeshanchuan/MotoNav`；App 和圆屏 OTA 均从这个仓库的非草稿、非预发布 Release 获取文件。
 - 1.75C 测试 Release 的 OTA 索引指向带 `diagnostic=true` 的 `v7.12.9-nav.9-ride-info-imu-test`；该版本包含第四个行驶信息页面并保留 QMI8658 诊断采样。OTA 只使用 `*_app_0x10000.bin`，`*_full_0x0.bin` 仅用于 USB 救援。当前版本仅做停车和安全场地观察，不能用于事故判定或联系人通知；返回 `nav.6` 需要手动 USB 救援，直到另行发布更高版本的稳定固件。
@@ -48,6 +48,7 @@
 - `v8.3.50` App 测试版：修复检查到圆屏固件更新后，更新按钮仍沿用检查过程中的禁用状态而显示灰色、无法点击的问题；发现候选版本时会恢复按钮可用状态。
 - `v8.3.51` App 测试版：诊断页显示 QMI8658 三轴加速度、三轴角速度，以及 `IMU,HEALTH` 的采样缺口、重力范围、静止样本、饱和计数和采样间隔；只用于 P1 记录验证，不改变事故通知边界。
 - `v8.3.52` / `v7.12.9-nav.9-ride-info-imu-test` 测试版：Android 底栏增加“行驶信息”页，显示速度、三轴加速度和模长、三轴角速度和模长、重力向量估算倾角、温度、连接和采样健康；圆屏增加第四个行驶信息页，和导航、天气、音乐按相对画面方向左右循环切换。页面只展示数据，不启动事故判定或联系人通知。
+- `v8.3.53` OTA 修正版：Android 在 BLE 配对完成后限次重试 517 字节 MTU，并把签名 BEGIN 控制包上限从 500 调整为固件 `RXQ_MAX=512`；修复部分手机显示“蓝牙数据包不足以发送 OTA 签名”的问题。固件协议和 OTA 信任根不变，现有 `v7.12.9-nav.9-ride-info-imu-test` 可继续使用；若手机最终只能保持 23/185/247 字节 MTU，仍需重连或使用 USB 救援，不能拆分旧固件的签名 BEGIN 包。
 
 ### 1.3 已实现但仍需实机确认
 

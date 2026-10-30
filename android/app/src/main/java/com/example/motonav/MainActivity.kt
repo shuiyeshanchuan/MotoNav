@@ -166,8 +166,10 @@ import kotlin.math.sqrt
  *         普通电话灵动岛改为单张卡片（配合固件 v7.12.9-nav.6；测试版固件为 v7.12.9-nav.7-imu-test）。
  *   v8.3.52  新增“行驶信息”页：速度、IMU 三轴/模长、角速度、倾角估算、温度和链路健康；
  *         圆屏新增第四个横向循环页面（配合测试固件 v7.12.9-nav.9-ride-info-imu-test）。
+ *   v8.3.53  修复部分手机在 BLE 配对完成前协商到 23 字节 MTU，导致 OTA 签名 BEGIN 包无法发送；
+ *         认证后限次重试 MTU 517，并将控制包上限与圆屏 RXQ_MAX 对齐到 512 字节。
  */
-const val APP_VERSION = "v8.3.52"
+const val APP_VERSION = "v8.3.53"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
