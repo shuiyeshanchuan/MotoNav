@@ -209,6 +209,7 @@ unsigned long hidTapAt = 0;
 void hidMediaTick();
 bool hidMediaReady();
 bool wxDirty = false;                 // v5.3 天气页要重画
+bool rideInfoDirty = true;            // 行驶信息页需要重画
 
 // ================= v6.5 蓝牙配对验证 =================
 #define PAIR_WINDOW_MS  120000UL      // 开机 2 分钟内可以配对新手机

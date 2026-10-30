@@ -40,6 +40,7 @@ void batPoll() {
   if (mediaHid && changed && pct >= 0) mediaHid->setBatteryLevel((uint8_t)constrain(pct, 0, 100));
   if (changed) {
     if (onWaitScreen && page == 0 && !sliding) drawStatus();        // v7.2 只重画状态栏
+    else if (page == 3 && !sliding) rideInfoDirty = true;
     else if (inNav) navDirty = true;
   }
   if (changed || now - batSentAt > 60000) {

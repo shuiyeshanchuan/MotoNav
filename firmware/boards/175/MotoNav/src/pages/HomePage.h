@@ -95,16 +95,16 @@ void animateCat() {
   needFlush = true;
 }
 
-// 页面：导航左滑天气，右滑音乐，上下滑也可查看天气
-int page = 0;                               // 0 = 导航 / 首页，1 = 天气，2 = 音乐
+// 页面：只允许横向循环切换导航、天气、音乐和行驶信息。
+int page = 0;                               // 0 = 导航 / 首页，1 = 天气，2 = 音乐，3 = 行驶信息
 unsigned long pageAt = 0;
 
-// 页面顺序对应滑动位置：音乐在左，主页居中，天气在右；导航主页不显示。
+// 页面顺序对应滑动位置：音乐、主页、天气、行驶信息；导航主页不显示。
 void drawPageDots() {
   if (page == 0 && inNav) return;
-  const int pageOrder[] = {2, 0, 1};
-  for (int i = 0; i < 3; i++) {
-    aaDisc(CX + (i - 1) * 20, 444, 4, page == pageOrder[i] ? C_WHITE : 0x4208);
+  const int pageOrder[] = {2, 0, 1, 3};
+  for (int i = 0; i < 4; i++) {
+    aaDisc(CX + (i - 1.5f) * 18, 444, 4, page == pageOrder[i] ? C_WHITE : 0x4208);
   }
 }
 
@@ -113,6 +113,7 @@ void drawWaiting(int st) {
   if (sliding) return;                                                 // v5.5 正在滑动：滑完再画
   if (page == 2) { onWaitScreen = false; musicDirty = true; return; }
   if (page == 1) { onWaitScreen = false; wxDirty = true; return; }   // v5.3 正在看天气：先不画首页，滑回来时再画
+  if (page == 3) { onWaitScreen = false; rideInfoDirty = true; return; }
   gfx->fillScreen(C_BLACK);
   onWaitScreen = true; waitSt = st;          // v3.6 首页猫猫 → v4.6 像素骑手
   riderPrevF = -1; riderPrevZ = -2;

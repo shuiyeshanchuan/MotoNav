@@ -15,21 +15,25 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 
-/** Three independent, lazily created pages; bottom navigation never scrolls away. */
+/** Four independent, lazily created pages; bottom navigation never scrolls away. */
 class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
                      private val build:(Int)->View, private val onSelected:(Int)->Unit):LinearLayout(activity) {
     private val S=NavStyle
     private fun dp(v:Int)=S.dpi(activity,v)
-    private val titles=listOf("导航","小圆屏","设置")
+    private val titles=listOf("导航","小圆屏","行驶信息","设置")
     private val host=FrameLayout(activity)
-    private val pages=arrayOfNulls<ScrollView>(3)
+    private val pages=arrayOfNulls<ScrollView>(4)
     private val restoreY=run {
         val old=saved?.getIntArray("main_page_scroll")
         when {
-            old == null -> IntArray(3)
-            old.size == 3 -> old
-            old.size >= 5 -> intArrayOf(old[0], old[1], old[3])
-            else -> IntArray(3)
+            old == null -> IntArray(4)
+            old.size == 4 -> old
+            // v8.3.37-v8.3.51 had three tabs; its settings scroll position
+            // is now the fourth tab. Older five-tab builds stored settings at
+            // index 3.
+            old.size == 3 -> intArrayOf(old[0], old[1], 0, old[2])
+            old.size >= 5 -> intArrayOf(old[0], old[1], 0, old[3])
+            else -> IntArray(4)
         }
     }
     private val tabs=ArrayList<LinearLayout>()
@@ -69,7 +73,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
     }
 
     fun showPage(index:Int) {
-        if(index !in 0..2)return
+        if(index !in 0..3)return
         pages[selectedPage]?.visibility=GONE
         selectedPage=index
         val page=pages[index] ?: ScrollView(activity).apply {
@@ -91,7 +95,7 @@ class MainPagesShell(private val activity:AppCompatActivity, saved:Bundle?,
 
     fun save(out:Bundle) {
         out.putInt("main_page_selected",selectedPage)
-        out.putIntArray("main_page_scroll",IntArray(3){pages[it]?.scrollY ?: restoreY[it]})
+        out.putIntArray("main_page_scroll",IntArray(4){pages[it]?.scrollY ?: restoreY[it]})
     }
 
 }

@@ -43,6 +43,7 @@
 #include "src/diagnostics/RenderBenchmarks.h"
 #include "src/diagnostics/DeviceDiagnostics.h"
 #include "src/diagnostics/ImuDiagnostics.h"
+#include "src/pages/RideInfoPage.h"
 
 // 初始化：硬件、画布、持久化设置及蓝牙服务。
 void setup() {
@@ -295,6 +296,7 @@ void loop() {
     pairOn = false; pairDone = false;
     if (page == 2) musicDirty = true;
     else if (page == 1) wxDirty = true;
+    else if (page == 3) rideInfoDirty = true;
     else if (inNav) navDirty = true;
     else drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
   }
@@ -316,6 +318,7 @@ void loop() {
     callIslandDrawn = false;
     if (page == 2) musicDirty = true;
     else if (page == 1) wxDirty = true;
+    else if (page == 3) rideInfoDirty = true;
     else if (inNav) navDirty = true;
     else drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
   }
@@ -330,6 +333,7 @@ void loop() {
     noticeDirty = false;
     if (page == 2) musicDirty = true;
     else if (page == 1) wxDirty = true;
+    else if (page == 3) rideInfoDirty = true;
     else if (inNav) navDirty = true;
     else drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
   }
@@ -349,6 +353,7 @@ void loop() {
     if (!callOn && !pairOn) {
       if (page == 2) musicDirty = true;
       else if (page == 1) wxDirty = true;
+      else if (page == 3) rideInfoDirty = true;
       else if (inNav) navDirty = true;
       else drawWaiting(conn ? WAIT_READY : WAIT_NOLINK);
     }
@@ -356,6 +361,7 @@ void loop() {
 
   musicTick();
   weatherTick();                                       // v5.3 天气页
+  rideInfoTick();                                      // display-only speed + IMU telemetry
   if (inNav && navDirty && !fxOn && !callOn && !pairOn && !powerMenuOn && page == 0 && !sliding) {
     drawNavFrame();
     if (staleShown) drawStaleOverlay();

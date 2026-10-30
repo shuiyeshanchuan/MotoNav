@@ -15,6 +15,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -32,6 +33,9 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import java.io.File
+import java.util.Locale
+import kotlin.math.atan2
+import kotlin.math.sqrt
 
 /**
  * MotoNav 手机 App
@@ -160,8 +164,10 @@ import java.io.File
  *   v8.3.50  修复圆屏 OTA 发现更新后“更新至…”按钮沿用上次禁用状态的问题。
  *   v8.3.51  诊断页显示 QMI8658 原始三轴和 IMU 健康摘要，便于确认安装方向与采样连续性。
  *         普通电话灵动岛改为单张卡片（配合固件 v7.12.9-nav.6；测试版固件为 v7.12.9-nav.7-imu-test）。
+ *   v8.3.52  新增“行驶信息”页：速度、IMU 三轴/模长、角速度、倾角估算、温度和链路健康；
+ *         圆屏新增第四个横向循环页面（配合测试固件 v7.12.9-nav.9-ride-info-imu-test）。
  */
-const val APP_VERSION = "v8.3.51"
+const val APP_VERSION = "v8.3.52"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -242,19 +248,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var mainPages: MainPagesShell
-    private val pageRefreshers = Array(3) { ArrayList<() -> Unit>() }
+    private val pageRefreshers = Array(4) { ArrayList<() -> Unit>() }
+    private var rideInfoSamplingOwned = false
+    private var rideInfoSamplingRequestedAt = 0L
 
     private fun buildMainPages(saved: Bundle?) {
         mainPages = MainPagesShell(this, saved, { index -> buildMainPage(index) }) { index ->
             hideKeyboard()
             pageRefreshers[index].forEach { it() }
+            onMainPageSelected(index)
             if (index == 0 && searchInput?.text.isNullOrBlank()) refreshHomeIdle?.invoke()
         }
         setContentView(mainPages)
         val oldPage = saved?.getInt("main_page_selected", 0) ?: 0
-        // v8.3 and earlier had five tabs.  Voice, settings and the old "more"
-        // page now live under the single Settings tab.
-        mainPages.showPage(if (oldPage == 0) 0 else if (oldPage == 1) 1 else 2)
+        // v8.3.51 and earlier had three tabs; the old settings tab (index 2)
+        // is now index 3 after inserting the ride information page.
+        mainPages.showPage(when (oldPage) {
+            0 -> 0
+            1 -> 1
+            2 -> 3
+            else -> oldPage.coerceIn(0, 3)
+        })
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (mainPages.selectedPage != 0) mainPages.showPage(0)
@@ -270,7 +284,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(20))
         }
-        val titles = listOf("导航", "小圆屏", "设置")
+        val titles = listOf("导航", "小圆屏", "行驶信息", "设置")
         content.addView(pageHeader(if (index == 0) "MotoNav" else titles[index]))
         when (index) {
             0 -> {
@@ -296,6 +310,9 @@ class MainActivity : AppCompatActivity() {
                 content.addView(section("firmware", "圆屏固件更新", { firmwareSummary() }) { firmwareUpdateSection(it) })
             }
             2 -> {
+                content.addView(drivingInfoCard())
+            }
+            3 -> {
                 content.addView(section("map", "地图与显示", { mapSummary() }) { mapSection(it) })
                 content.addView(section("voice", "导航语音", { voiceSummary() }) { voiceSection(it) })
                 content.addView(section("keys", "地图与天气 Key", { keySummary() }) { keySection(it) })
@@ -310,6 +327,100 @@ class MainActivity : AppCompatActivity() {
         val callbacks = refreshers.subList(firstCallback, refreshers.size)
         pageRefreshers[index].addAll(callbacks.toList()); callbacks.clear()
         return content
+    }
+
+    /** Keep the optional IMU stream tied to the visible ride information page. */
+    private fun onMainPageSelected(index: Int) {
+        if (index == 2) {
+            BleLink.requestImuDiagnosticsStatus()
+            ensureRideInfoSampling(true)
+        } else if (rideInfoSamplingOwned) {
+            BleLink.setImuDiagnosticsStream(false)
+            rideInfoSamplingOwned = false
+            rideInfoSamplingRequestedAt = 0L
+        }
+    }
+
+    private fun ensureRideInfoSampling(force: Boolean = false) {
+        if (!BleLink.isConnected) return
+        if (BleLink.screenImuStreamEnabled) {
+            // A diagnostic session enabled from Advanced Settings belongs to
+            // the user and must not be stopped when this page closes.
+            rideInfoSamplingOwned = false
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - rideInfoSamplingRequestedAt < 3000L) return
+        rideInfoSamplingRequestedAt = now
+        rideInfoSamplingOwned = true
+        BleLink.setImuDiagnosticsStream(true)
+    }
+
+    /** Live speed and opt-in QMI8658 telemetry.  This is display-only. */
+    private fun drivingInfoCard(): View {
+        val box = card(softwareLayer = false)
+        box.addView(label("行驶信息", 18f, TEXT, bold = true))
+        box.addView(label("速度、惯性、倾角和温度；IMU 数据仅在诊断固件可用", 12f, SUB))
+
+        val speed = label("", 34f, PINK, bold = true).apply { gravity = Gravity.CENTER }
+        val speedUnit = label("km/h", 12f, SUB).apply { gravity = Gravity.CENTER }
+        box.addView(speed, lpMatch(top = 10))
+        box.addView(speedUnit)
+        box.addView(divider(top = 12))
+
+        val telemetry = label("", 14f, TEXT).apply {
+            setTypeface(Typeface.MONOSPACE)
+            setPadding(0, dp(4), 0, 0)
+        }
+        box.addView(telemetry)
+        val state = label("", 12f, SUB).apply { setPadding(0, dp(10), 0, 0) }
+        box.addView(state)
+        box.addView(note("倾角由加速度重力向量估算；加速、制动、颠簸时会受到影响，不能当作精确车身姿态。"))
+
+        fun one(value: Double, digits: Int = 2): String =
+            if (value.isFinite()) String.format(Locale.US, "%.${digits}f", value) else "--"
+        fun sampleText(): String {
+            val sample = BleLink.screenImuSample
+            if (sample == null ||
+                SystemClock.elapsedRealtime() - sample.receivedAtMonotonicMs > 1500L) {
+                return "加速度  -- m/s²\n角速度  -- °/s\n倾角    -- °\n温度    -- °C"
+            }
+            val ax = sample.accelerationXMps2
+            val ay = sample.accelerationYMps2
+            val az = sample.accelerationZMps2
+            val gx = sample.gyroXDegPerSec
+            val gy = sample.gyroYDegPerSec
+            val gz = sample.gyroZDegPerSec
+            val accel = sample.accelerationMagnitudeMps2()
+            val gyro = sample.gyroMagnitudeDegPerSec()
+            val roll = atan2(ay, az)
+            val pitch = atan2(-ax, sqrt(ay * ay + az * az))
+            val tilt = Math.toDegrees(sqrt(roll * roll + pitch * pitch))
+            return "加速度  ${one(accel)} m/s²  (${one(ax)}, ${one(ay)}, ${one(az)})\n" +
+                "角速度  ${one(gyro)} °/s  (${one(gx)}, ${one(gy)}, ${one(gz)})\n" +
+                "倾角    ${one(tilt, 1)} °\n" +
+                "温度    ${one(sample.temperatureC, 1)} °C"
+        }
+        fun paint() {
+            if (::mainPages.isInitialized && mainPages.selectedPage == 2) ensureRideInfoSampling()
+            val currentSpeed = NaviBridge.uiSpeed
+            speed.text = if (currentSpeed >= 0) currentSpeed.toString() else "--"
+            telemetry.text = sampleText()
+            val link = if (BleLink.isConnected) "圆屏已连接" else "圆屏未连接"
+            val imu = if (!BleLink.screenImuPresent) "IMU 不可用（普通固件或尚未检测到）"
+                else if (!BleLink.screenImuSelfTestKnown) "IMU 自检未完成"
+                else if (!BleLink.screenImuSelfTestOk) "IMU 自检失败"
+                else if (!BleLink.screenImuConfigured) "IMU 未配置"
+                else if (!BleLink.screenImuStreamEnabled) "IMU 采样未开启"
+                else "IMU 采样中 · 样本 ${BleLink.screenImuSampleCount}"
+            val health = BleLink.screenImuHealth?.let {
+                " · 间隔 ${it.intervalMinMs}–${it.intervalMaxMs} ms · 读错 ${it.readErrors}"
+            }.orEmpty()
+            state.text = "$link · $imu$health"
+        }
+        refreshers += { paint() }
+        paint()
+        return wrapMargin(box)
     }
 
     private fun pageHeader(title: String): View = LinearLayout(this).apply {
@@ -1548,7 +1659,7 @@ class MainActivity : AppCompatActivity() {
         val on = !uiPrefs.getBoolean("dev_mode", false)
         uiPrefs.edit().putBoolean("dev_mode", on).apply()
         devWrap?.visibility = if (on) View.VISIBLE else View.GONE
-        if (on) mainPages.showPage(2)
+        if (on) mainPages.showPage(3)
         toast(if (on) "已打开高级设置" else "已隐藏高级设置")
     }
 
@@ -2067,6 +2178,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (rideInfoSamplingOwned) {
+            BleLink.setImuDiagnosticsStream(false)
+            rideInfoSamplingOwned = false
+        }
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }

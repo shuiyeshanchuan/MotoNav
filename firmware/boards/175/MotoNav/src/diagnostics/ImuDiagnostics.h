@@ -7,6 +7,22 @@
 #define MOTONAV_IMU_DIAGNOSTICS 0
 #endif
 
+// Shared by the release and diagnostic images.  The ride information page
+// must not depend on the diagnostic build's private state, so it reads one
+// small, copyable snapshot instead.  Release firmware leaves the snapshot
+// unavailable and never initializes the QMI8658.
+struct ImuPageTelemetry {
+  bool available = false;
+  bool configured = false;
+  bool streamEnabled = false;
+  float ax = -1.0f, ay = -1.0f, az = -1.0f;
+  float gx = -1.0f, gy = -1.0f, gz = -1.0f;
+  float temperature = -1.0f;
+  uint32_t samples = 0;
+  uint32_t readErrors = 0;
+  uint32_t lastSampleAt = 0;
+};
+
 #if MOTONAV_IMU_DIAGNOSTICS
 
 #include <ImuDrv.hpp>
@@ -405,6 +421,29 @@ inline void imuDiagnosticsNotifyTick() {
   }
 }
 
+// Copy the latest diagnostic sample for the optional ride information page.
+// A sample older than 1.5 seconds is treated as unavailable so a stalled I2C
+// sensor cannot look like live data.  This is display-only and has no bearing
+// on the record-only incident diagnostics state machine.
+inline bool readImuPageTelemetry(ImuPageTelemetry &out) {
+  out = ImuPageTelemetry();
+  out.configured = imuDiagnostics.configured;
+  out.streamEnabled = imuDiagnostics.streamEnabled;
+  out.ax = imuDiagnostics.ax;
+  out.ay = imuDiagnostics.ay;
+  out.az = imuDiagnostics.az;
+  out.gx = imuDiagnostics.gx;
+  out.gy = imuDiagnostics.gy;
+  out.gz = imuDiagnostics.gz;
+  out.temperature = imuDiagnostics.temperature;
+  out.samples = imuDiagnostics.samples;
+  out.readErrors = imuDiagnostics.readErrors;
+  out.lastSampleAt = imuDiagnostics.lastSampleAt;
+  out.available = out.configured && out.samples > 0 &&
+                  (millis() - out.lastSampleAt <= 1500UL);
+  return out.available;
+}
+
 #else
 
 // Keep the call sites present in every build while compiling the diagnostic
@@ -414,5 +453,10 @@ inline void imuDiagnosticsTick() {}
 inline void imuDiagnosticsNotifyTick() {}
 inline void setImuDiagnosticsStream(bool) {}
 inline void requestImuDiagnosticsStatus() {}
+
+inline bool readImuPageTelemetry(ImuPageTelemetry &out) {
+  out = ImuPageTelemetry();
+  return false;
+}
 
 #endif  // MOTONAV_IMU_DIAGNOSTICS

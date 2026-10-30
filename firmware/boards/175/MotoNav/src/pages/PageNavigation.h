@@ -112,7 +112,8 @@ void renderPage(int p) {
   int keep = page;
   bool ks = sliding;
   page = p; sliding = false;
-  if (p == 2) drawMusic();
+  if (p == 3) drawRideInfo();
+  else if (p == 2) drawMusic();
   else if (p == 1) drawWeather();
   else if (inNav) drawNavFrame();
   else drawWaiting(bleConnected ? WAIT_READY : WAIT_NOLINK);
@@ -199,6 +200,9 @@ void slideCommit() {
     onWaitScreen = false;
     wxDirty = false;
     if (!wxHave || millis() - wxAt > 15UL * 60 * 1000) { pendingEvt = "T,W"; wxAskAt = millis(); }
+  } else if (page == 3) {
+    onWaitScreen = false;
+    rideInfoDirty = true;
   } else {
     if (inNav) navDirty = true;
     else { riderPrevF = -1; riderPrevZ = -2; catForce = true; }
@@ -211,6 +215,7 @@ void slideCancel() {
   renderPage(page);
   if (page == 2) musicDirty = true;
   else if (page == 1) wxDirty = false;
+  else if (page == 3) rideInfoDirty = false;
   else if (inNav) navDirty = true;
   else { onWaitScreen = true; catForce = true; }
   needFlush = true;
@@ -251,7 +256,7 @@ void dragMove(int dx, int dy, unsigned long now) {
     if (abs(dx) < threshold && abs(dy) < threshold) return;
     if (abs(dx) <= abs(dy)) { dragBlocked = true; return; }
     dragSign = dx > 0 ? 1 : -1;
-    dragTarget = (page + (dragSign < 0 ? 1 : 2)) % 3;
+    dragTarget = (page + (dragSign < 0 ? 1 : 2)) % 4;
     if (!slidePrepare(dragTarget)) return;
     dragging = true;
     dragP = 0; dragV = 0; dragT = now;
@@ -284,7 +289,10 @@ void dragAbort() {
   dragBlocked = false;
   if (!dragging) return;
   sliding = false; dragging = false;
-  if (page == 2) musicDirty = true; else if (page == 1) wxDirty = true; else if (inNav) navDirty = true;
+  if (page == 2) musicDirty = true;
+  else if (page == 1) wxDirty = true;
+  else if (page == 3) rideInfoDirty = true;
+  else if (inNav) navDirty = true;
 }
 
 // 将触摸点换算到画布坐标，按钮使用较大的点按范围。

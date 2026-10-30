@@ -137,7 +137,12 @@ void handleText(const String &m) {
   if (m == "C") { stopArriveFx(); progReset(); resetNavState(); drawWaiting(WAIT_READY); return; }
   if (m == "#P0") { invalidateMapPose(); navDirty = true; return; }
 
-  if (m.startsWith("#v,")) { speedKmh = m.substring(3).toInt(); navDirty = true; return; }
+  if (m.startsWith("#v,")) {
+    speedKmh = m.substring(3).toInt();
+    navDirty = true;
+    rideInfoDirty = true;
+    return;
+  }
   if (m.startsWith("#a")) {                              // v8.3.38 后续两次转弯：#a,方向,距离,方向,距离
     nextNavDir = ""; nextNavDist = -1; afterNextNavDir = ""; afterNextNavDist = -1;
     int c1 = m.indexOf(','), c2 = m.indexOf(',', c1 + 1), c3 = m.indexOf(',', c2 + 1), c4 = m.indexOf(',', c3 + 1);
@@ -363,6 +368,7 @@ void handleText(const String &m) {
       noticeDirty = true;
       if (page == 2) musicDirty = true;
       else if (page == 1) wxDirty = true;
+      else if (page == 3) rideInfoDirty = true;
       else navDirty = true;
     }
     return;

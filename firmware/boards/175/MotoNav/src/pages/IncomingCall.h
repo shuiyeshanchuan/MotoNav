@@ -57,6 +57,7 @@ static void restoreAfterPowerMenu() {
   else if (pairOn) drawPairScreen();
   else if (page == 2) musicDirty = true;
   else if (page == 1) wxDirty = true;
+  else if (page == 3) rideInfoDirty = true;
   else if (inNav) navDirty = true;
   else drawWaiting(shownConn ? WAIT_READY : WAIT_NOLINK);
 }
