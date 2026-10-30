@@ -38,7 +38,9 @@ public final class AccidentRecordSessionTest {
             AccidentImuSampleParser.Health summary = (AccidentImuSampleParser.Health)
                     AccidentImuSampleParser.parse(
                             "IMU,HEALTH,1,1,0,0,1,0,1,0,0,0,0,1,970,0", 10);
-            AccidentRecordSession.Health enriched = base.withImuSummary(summary, 10);
+            AccidentRecordSession.Health enriched = AccidentRecordSession.Health.fromImuStatusAndSummary(
+                    status(), summary, base.bleConnected, base.blePacketsReceived, base.blePacketsLost,
+                    base.powerHealthy, base.gpsValid, base.gpsAccuracyM, 10);
             require(enriched.imuSummary == summary && enriched.imuReadErrors == 0,
                     "health summary was not retained");
             require(s.begin(10, enriched) == AccidentRecordSession.State.ARMED,

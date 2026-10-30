@@ -160,6 +160,23 @@ public final class AccidentRecordSession {
                     gpsValid, gpsAccuracyM, observedAtMonotonicMs);
         }
 
+        /** Combine the legacy STATUS flags with the optional versioned summary. */
+        public static Health fromImuStatusAndSummary(
+                AccidentImuSampleParser.Status status,
+                AccidentImuSampleParser.Health summary,
+                boolean bleConnected,
+                long blePacketsReceived,
+                long blePacketsLost,
+                boolean powerHealthy,
+                boolean gpsValid,
+                double gpsAccuracyM,
+                long observedAtMonotonicMs) {
+            if (summary == null) throw new IllegalArgumentException("IMU summary is required");
+            return fromImuStatus(status, bleConnected, blePacketsReceived, blePacketsLost,
+                    powerHealthy, gpsValid, gpsAccuracyM, observedAtMonotonicMs)
+                    .withImuSummary(summary, observedAtMonotonicMs);
+        }
+
         public Health withGps(GpsFix fix, long observedAt) {
             if (fix == null) throw new IllegalArgumentException("GPS fix is required");
             return new Health(imuPresent, selfTestKnown, selfTestOk, imuConfigured,
