@@ -285,6 +285,8 @@ public final class AccidentRecordSession {
     private long sequence;
     private long droppedFrames;
     private long invalidSamples;
+    /** A stream or sensor failure requires an explicit new session to recover. */
+    private boolean unavailableLatched;
 
     public AccidentRecordSession() {
         this(Config.defaults());
@@ -329,6 +331,7 @@ public final class AccidentRecordSession {
         sequence = 0;
         droppedFrames = 0;
         invalidSamples = 0;
+        unavailableLatched = false;
         health = initialHealth;
         state = State.SETUP;
         evaluateState(atMonotonicMs);
@@ -345,6 +348,7 @@ public final class AccidentRecordSession {
         latestGps = null;
         lastImuAt = -1;
         lastGpsAt = -1;
+        unavailableLatched = false;
     }
 
     /** Update IMU/link/power status without making a safety decision. */
@@ -352,6 +356,7 @@ public final class AccidentRecordSession {
         if (next == null) throw new IllegalArgumentException("health is required");
         health = next;
         if (state == State.DISABLED || state == State.STOPPED) return state;
+        if (!next.coreReady()) unavailableLatched = true;
         evaluateState(next.observedAtMonotonicMs);
         return state;
     }
@@ -364,6 +369,7 @@ public final class AccidentRecordSession {
         if (fix == null || state == State.DISABLED || state == State.STOPPED) return state;
         if (lastGpsAt >= 0 && fix.monotonicMs <= lastGpsAt) {
             invalidSamples++;
+            unavailableLatched = true;
             state = State.UNAVAILABLE;
             return state;
         }
@@ -380,11 +386,13 @@ public final class AccidentRecordSession {
         if (!sample.finite() || lastImuAt >= 0 && sample.receivedAtMonotonicMs <= lastImuAt ||
                 lastImuAt >= 0 && sample.receivedAtMonotonicMs - lastImuAt > config.maximumImuGapMs) {
             invalidSamples++;
+            unavailableLatched = true;
             state = State.UNAVAILABLE;
             return state;
         }
         lastImuAt = sample.receivedAtMonotonicMs;
         evaluateState(sample.receivedAtMonotonicMs);
+        if (state == State.UNAVAILABLE) return state;
         GpsFix gps = latestGps;
         long age = Long.MAX_VALUE;
         if (gps != null) {
@@ -403,6 +411,7 @@ public final class AccidentRecordSession {
     public State tick(long nowMonotonicMs) {
         if (nowMonotonicMs < 0 || state == State.DISABLED || state == State.STOPPED) return state;
         if (lastImuAt >= 0 && nowMonotonicMs - lastImuAt > config.maximumImuGapMs) {
+            unavailableLatched = true;
             state = State.UNAVAILABLE;
         } else {
             evaluateState(nowMonotonicMs);
@@ -424,7 +433,12 @@ public final class AccidentRecordSession {
 
     private void evaluateState(long at) {
         if (state == State.DISABLED || state == State.STOPPED) return;
+        if (unavailableLatched) {
+            state = State.UNAVAILABLE;
+            return;
+        }
         if (!health.coreReady()) {
+            unavailableLatched = true;
             state = State.UNAVAILABLE;
             return;
         }

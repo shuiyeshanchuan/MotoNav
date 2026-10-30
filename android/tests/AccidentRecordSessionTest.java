@@ -84,6 +84,11 @@ public final class AccidentRecordSessionTest {
             s.onImu(imu(200));
             require(s.state() == AccidentRecordSession.State.UNAVAILABLE,
                     "unavailable recorder rearmed itself");
+            s.updateHealth(health(true, 300));
+            require(s.state() == AccidentRecordSession.State.UNAVAILABLE,
+                    "healthy status silently rearmed a failed session");
+            require(s.begin(400, health(true, 400)) == AccidentRecordSession.State.ARMED,
+                    "explicit new session did not clear the failure latch");
         });
 
         test("duplicate, backward, and large-gap IMU samples stop the session", () -> {
