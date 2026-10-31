@@ -90,6 +90,8 @@ object NaviBridge {
     @Volatile var uiRouteSource = ""
     @Volatile var uiRoutePlannedAt = 0L
     @Volatile var uiRouteState = "等待路线"
+    /** P1 accident recorder receives the same trusted navigation/cruise fixes. */
+    @Volatile var accidentLocationObserver: ((AccidentRecordSession.GpsFix) -> Unit)? = null
     private var lastRouteMetaMsg = ""
 
     /** Compact route facts for the round screen; unknown source/time remain explicit. */
@@ -709,6 +711,9 @@ object NaviBridge {
             if (!arrivalSession.isOpen(epoch)) return@post
             if (cruising) cruiseIdle.onFix(receivedAt, fixStamp, idleSpeed, idleLat, idleLng, idleAccuracy)
             RideRecorder.onFix(idleLat,idleLng,fixStamp,receivedWall,idleAccuracy,idleSpeed)
+            publishAccidentFix(
+                c?.latitude ?: 0.0, c?.longitude ?: 0.0, c != null,
+                kmh, idleAccuracy, receivedAt)
             if (c != null) {
                 myLat = c.latitude; myLng = c.longitude
                 if (active && reliable) addTrip(c.latitude, c.longitude, kmh)    // v7.9
@@ -1203,6 +1208,7 @@ object NaviBridge {
                 cruiseIdle.onFix(now(), fix.time, fix.speed.toDouble(), lat, lng, fix.accuracy.toDouble())
                 RideRecorder.onFix(lat, lng, fix.time, System.currentTimeMillis(),
                     fix.accuracy.toDouble(), fix.speed.toDouble())
+                publishAccidentFix(lat, lng, true, kmh, fix.accuracy.toDouble(), now())
             } }
             cruiseLocation = client
             client.startLocation()
@@ -1210,6 +1216,37 @@ object NaviBridge {
             stopCruiseMapLocation()
             extraInfo = "巡航独立定位未启动：${e.message}"
         }
+    }
+
+    /**
+     * Feed only validated GCJ-02 fixes to the P1 record-only monitor. The
+     * monitor keeps invalid/stale GPS explicit and never turns this callback
+     * into an accident or notification decision.
+     */
+    private fun publishAccidentFix(
+        latitude: Double,
+        longitude: Double,
+        coordinatePresent: Boolean,
+        speedKmh: Int,
+        accuracyM: Double,
+        receivedAtMonotonicMs: Long
+    ) {
+        val observer = accidentLocationObserver ?: return
+        val lat = latitude
+        val lng = longitude
+        val valid = coordinatePresent && lat.isFinite() && lng.isFinite() &&
+            lat in -90.0..90.0 && lng in -180.0..180.0 &&
+            (lat != 0.0 || lng != 0.0) && accuracyM.isFinite() && accuracyM >= 0.0 &&
+            accuracyM <= 100.0 && speedKmh >= 0
+        val fix = runCatching {
+            if (valid) AccidentRecordSession.GpsFix.valid(
+                receivedAtMonotonicMs, lat, lng, speedKmh.toDouble(), accuracyM)
+            else AccidentRecordSession.GpsFix.invalid(
+                receivedAtMonotonicMs, 0.0, 0.0,
+                speedKmh.coerceAtLeast(0).toDouble(),
+                if (accuracyM.isFinite() && accuracyM >= 0.0) accuracyM else 999.0)
+        }.getOrNull() ?: return
+        runCatching { observer(fix) }
     }
 
     private fun stopCruiseMapLocation() {

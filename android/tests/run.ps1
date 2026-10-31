@@ -13,10 +13,12 @@ if($LASTEXITCODE -ne 0){throw 'Tests failed'}
     (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/AccidentSafetyModel.java') `
     (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/AccidentImuSampleParser.java') `
     (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/AccidentRecordSession.java') `
+    (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/AccidentRecordCoordinator.java') `
     (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/ImuStaticBaseline.java') `
     (Join-Path $PSScriptRoot 'AccidentSafetyModelTest.java') `
     (Join-Path $PSScriptRoot 'AccidentImuSampleParserTest.java') `
     (Join-Path $PSScriptRoot 'AccidentRecordSessionTest.java') `
+    (Join-Path $PSScriptRoot 'AccidentRecordCoordinatorTest.java') `
     (Join-Path $PSScriptRoot 'ImuStaticBaselineTest.java')
 if($LASTEXITCODE -ne 0){throw 'Accident safety model compile failed'}
 & $taskJava -cp $taskClasses com.example.motonav.AccidentSafetyModelTest
@@ -25,6 +27,8 @@ if($LASTEXITCODE -ne 0){throw 'Accident safety model tests failed'}
 if($LASTEXITCODE -ne 0){throw 'Accident IMU parser tests failed'}
 & $taskJava -cp $taskClasses com.example.motonav.AccidentRecordSessionTest
 if($LASTEXITCODE -ne 0){throw 'Accident record session tests failed'}
+& $taskJava -cp $taskClasses com.example.motonav.AccidentRecordCoordinatorTest
+if($LASTEXITCODE -ne 0){throw 'Accident record coordinator tests failed'}
 & $taskJava -cp $taskClasses com.example.motonav.ImuStaticBaselineTest
 if($LASTEXITCODE -ne 0){throw 'IMU static baseline tests failed'}
 

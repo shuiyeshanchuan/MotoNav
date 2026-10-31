@@ -34,10 +34,11 @@ object FirmwareUpdateClient {
         val notes: String
     )
 
-    /** Returns the newest firmware candidate across all non-prerelease Releases.
-     * GitHub's releases API is not guaranteed to return newly created tags first;
-     * selecting the first indexed release could therefore keep offering nav.10
-     * after nav.11 had already been published.
+    /** Returns the newest formal firmware candidate across all non-prerelease Releases.
+     * GitHub's releases API is not guaranteed to return newly created tags first.
+     * Diagnostic images are deliberately excluded from the ordinary stable update
+     * path, even when a historical manifest incorrectly labels them stable. This
+     * keeps a nav10 device from being offered the unverified nav11 test image.
      */
     fun check(board: String): Candidate {
         require(board == "175C" || board == "175") { "请先连接受支持的圆屏" }
@@ -61,6 +62,7 @@ object FirmwareUpdateClient {
             val manifestName = safeAssetName(item.optString("manifestAsset"))
             val imageName = safeAssetName(item.optString("imageAsset"))
             if (!imageName.endsWith("_app_0x10000.bin")) continue
+            if (isDiagnosticAsset(version, manifestName, imageName)) continue
             val manifestUrl = assetUrl(assets, manifestName) ?: continue
             val imageUrl = assetUrl(assets, imageName) ?: continue
             val candidate = Candidate(board, version, manifestUrl, imageUrl,
@@ -133,6 +135,15 @@ object FirmwareUpdateClient {
         require(Regex("[A-Za-z0-9._-]{1,180}").matches(value)) { "更新索引中的文件名无效" }
         return value
     }
+
+    /** Exposed for the release-policy regression test; this is not an OTA bypass. */
+    fun isDiagnosticAssetName(version: String, manifestName: String, imageName: String): Boolean {
+        val text = "$version $manifestName $imageName".lowercase()
+        return "imu-test" in text || "imu-diagnostic" in text || "ride-info" in text
+    }
+
+    private fun isDiagnosticAsset(version: String, manifestName: String, imageName: String): Boolean =
+        isDiagnosticAssetName(version, manifestName, imageName)
 
     private fun assetUrl(assets: JSONArray, name: String): String? {
         for (i in 0 until assets.length()) {

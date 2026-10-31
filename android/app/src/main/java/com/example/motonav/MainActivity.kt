@@ -175,8 +175,9 @@ import kotlin.math.sqrt
  *   v8.3.57  修复 nav.9 到 nav.10 的数字版本比较，避免诊断固件被误判为旧版本。
  *   v8.3.58  配套圆屏 nav.11，统一四页横滑顺序和圆点顺序；行驶信息页使用固件中文字形。
  *   v8.3.59  修复 GitHub Release 返回顺序不稳定时只取旧 OTA 索引，确保选择最新 nav 固件。
+ *   v8.3.60  P1 事故监测只记录模式：接入 nav10 IMU 诊断流和导航定位，保存本地脱敏记录；不判定事故、不通知联系人。
  */
-const val APP_VERSION = "v8.3.59"
+const val APP_VERSION = "v8.3.60"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -232,6 +233,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         CrashLog.install(this)                       // v5.5 闪退记录
         NaviBridge.initPrivacy(this)
+        AccidentRecordMonitor.attach(this)
         MapFeeder.load(this)
         CallWatcher.load(this)                       // v5.0 来电显示开关
         Weather.init(this)                           // v5.4 天气
@@ -1822,6 +1824,33 @@ class MainActivity : AppCompatActivity() {
                 healthText +
                 (if (BleLink.screenImuStatus.isNotEmpty()) "\n原始状态：${BleLink.screenImuStatus}" else "")
         }
+        card.addView(subhead("事故监测（P1 只记录）", top = 14))
+        card.addView(note("以当前圆屏 nav10 诊断流为数据源，只在您明确开始后记录 IMU、定位和链路健康。当前不会判定事故、发送短信、拨号或通知联系人；记录结果仅用于停车和封闭场地复盘。"))
+        val accidentButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        accidentButtons.addView(pillButton("开始只记录", STROKE) {
+            toast(AccidentRecordMonitor.start())
+        }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(8) })
+        accidentButtons.addView(pillButton("停止并保存", STROKE) {
+            toast(AccidentRecordMonitor.stop())
+        }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        card.addView(accidentButtons)
+        val exportButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, dp(4))
+        }
+        exportButtons.addView(pillButton("复制记录", STROKE) {
+            toast(AccidentRecordMonitor.copyLatest(this@MainActivity))
+        }, LinearLayout.LayoutParams(0, dp(46), 1f).apply { rightMargin = dp(8) })
+        exportButtons.addView(pillButton("清除记录", STROKE) {
+            toast(AccidentRecordMonitor.clear())
+        }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        card.addView(exportButtons)
+        val accidentInfo = label("", 12f, SUB).apply { setLineSpacing(0f, 1.15f); setTextIsSelectable(true) }
+        card.addView(accidentInfo)
+        refreshers += { accidentInfo.text = AccidentRecordMonitor.statusText() }
         // Static baseline capture remains in the advanced diagnostic section so
         // ordinary riding never starts a long-running sensor session.
         imuBaselinePanel = ImuBaselinePanel(this)

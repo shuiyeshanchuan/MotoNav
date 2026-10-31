@@ -67,6 +67,9 @@ class NavService : Service() {
             acquire()
         }
 
+        // Keep the explicit P1 record-only monitor attached while the app is
+        // backgrounded. It remains opt-in and never sends notifications.
+        AccidentRecordMonitor.attach(this)
         BleLink.startAuto(this)
         Brightness.start(this)
         MapFeeder.load(this)              // v2.0 读取小地图开关
