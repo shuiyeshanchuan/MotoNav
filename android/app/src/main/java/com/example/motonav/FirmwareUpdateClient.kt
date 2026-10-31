@@ -16,6 +16,10 @@ import java.net.URL
 object FirmwareUpdateClient {
     private const val REPOSITORY = "shuiyeshanchuan/MotoNav"
     private const val INDEX_ASSET = "motonav-ota-stable.json"
+    // The GitHub releases API includes metadata for every asset in every
+    // release. It is larger than an individual OTA manifest and grows as
+    // releases accumulate, so it needs its own bounded limit.
+    private const val MAX_RELEASES_BYTES = 2 * 1024 * 1024
     private const val MAX_MANIFEST_BYTES = 256 * 1024
     private const val MAX_IMAGE_BYTES = 5 * 1024 * 1024
     private const val CONNECT_TIMEOUT_MS = 10_000
@@ -33,7 +37,10 @@ object FirmwareUpdateClient {
     /** Returns the newest non-prerelease GitHub Release that publishes a stable OTA index. */
     fun check(board: String): Candidate {
         require(board == "175C" || board == "175") { "请先连接受支持的圆屏" }
-        val releases = getJsonArray("https://api.github.com/repos/$REPOSITORY/releases?per_page=30")
+        val releases = getJsonArray(
+            "https://api.github.com/repos/$REPOSITORY/releases?per_page=30",
+            MAX_RELEASES_BYTES
+        )
         for (i in 0 until releases.length()) {
             val release = releases.optJSONObject(i) ?: continue
             if (release.optBoolean("draft") || release.optBoolean("prerelease")) continue
@@ -126,7 +133,8 @@ object FirmwareUpdateClient {
         return null
     }
 
-    private fun getJsonArray(url: String): JSONArray = JSONArray(String(download(url, MAX_MANIFEST_BYTES), Charsets.UTF_8))
+    private fun getJsonArray(url: String, maxBytes: Int): JSONArray =
+        JSONArray(String(download(url, maxBytes), Charsets.UTF_8))
 
     private fun download(url: String, maxBytes: Int, progress: ((Int, Int) -> Unit)? = null): ByteArray {
         val connection = URL(url).openConnection() as HttpURLConnection
@@ -139,7 +147,6 @@ object FirmwareUpdateClient {
             connection.setRequestProperty("Cache-Control", "no-cache")
             if (connection.responseCode != HttpURLConnection.HTTP_OK) error("GitHub 请求失败：HTTP ${connection.responseCode}")
             val total = connection.contentLengthLong
-            if (total > maxBytes) error("下载文件超过允许大小")
             connection.inputStream.use { input ->
                 val output = ByteArrayOutputStream(if (total in 1..maxBytes) total.toInt() else 16 * 1024)
                 val buffer = ByteArray(16 * 1024)
@@ -147,9 +154,11 @@ object FirmwareUpdateClient {
                 var read = 0
                 while (input.read(buffer).also { count = it } >= 0) {
                     read += count
-                    if (read > maxBytes) error("下载文件超过允许大小")
+                    if (read > maxBytes) {
+                        error("下载文件超过允许大小（已读取 ${read} 字节，上限 ${maxBytes} 字节）")
+                    }
                     output.write(buffer, 0, count)
-                    progress?.invoke(read, if (total in 1..Int.MAX_VALUE) total.toInt() else -1)
+                    progress?.invoke(read, if (total in 1..maxBytes) total.toInt() else -1)
                 }
                 return output.toByteArray()
             }

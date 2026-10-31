@@ -171,8 +171,9 @@ import kotlin.math.sqrt
  *   v8.3.54  高级诊断增加四姿态 60 秒 IMU 静置基线采集，记录均值、标准差、范围、温度、采样间隔和健康门控；
  *         不自动写入零偏，不开启事故判定或联系人通知。
  *   v8.3.55  修复 Release 增量 dex 缓存不完整导致启动类缺失；发布前增加 APK 启动类完整性校验。
+ *   v8.3.56  修复 GitHub Release 列表超过固件清单上限导致圆屏 OTA 检查失败。
  */
-const val APP_VERSION = "v8.3.55"
+const val APP_VERSION = "v8.3.56"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
