@@ -78,7 +78,8 @@ $escapedSdk=$SdkPath.Replace('\','/').Replace(':','\:')
 if(-not $GradlePath){$GradlePath=Join-Path $project 'gradlew.bat'}
 Push-Location -LiteralPath $project
 try {
-    $buildArgs=@('--no-daemon','--max-workers=1','-Dorg.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8','-Pkotlin.compiler.execution.strategy=in-process',"-PpersonalApplicationId=$appId",'assembleRelease')
+    # Release artifacts must not reuse a partial incremental dex archive.
+    $buildArgs=@('--no-daemon','--max-workers=1','-Dorg.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8','-Pkotlin.compiler.execution.strategy=in-process',"-PpersonalApplicationId=$appId",'clean','assembleRelease')
     if($Offline){$buildArgs=@('--offline')+$buildArgs}
     & $GradlePath @buildArgs
     if($LASTEXITCODE -ne 0){throw 'Build failed. See the messages above.'}
@@ -86,6 +87,7 @@ try {
 $apk=Join-Path $project 'app/build/outputs/apk/release/app-release.apk'
 & "$SdkPath/build-tools/35.0.0/apksigner.bat" verify --verbose --print-certs $apk
 if($LASTEXITCODE -ne 0){throw 'APK signature verification failed.'}
+& (Join-Path $project 'verify-release.ps1') -ApkPath $apk -ExpectedSha1 $fingerprint
 Copy-Item -LiteralPath $apk -Destination "$out/MotoNav-personal.apk" -Force
 $env:MOTONAV_SIGN_PASSWORD=$null
 Write-Host "Done: $out" -ForegroundColor Green

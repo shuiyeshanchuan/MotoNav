@@ -17,7 +17,9 @@ if (-not $buildTools) { throw '找不到 Android SDK Build Tools' }
 
 $aapt2 = Join-Path $buildTools.FullName 'aapt2.exe'
 $apksigner = Join-Path $buildTools.FullName 'apksigner.bat'
-if (-not (Test-Path -LiteralPath $aapt2) -or -not (Test-Path -LiteralPath $apksigner)) {
+$dexdump = Join-Path $buildTools.FullName 'dexdump.exe'
+if (-not (Test-Path -LiteralPath $aapt2) -or -not (Test-Path -LiteralPath $apksigner) -or
+    -not (Test-Path -LiteralPath $dexdump)) {
   throw "Build Tools 不完整：$($buildTools.FullName)"
 }
 
@@ -52,6 +54,56 @@ $normalizedExpected = ($ExpectedSha1 -replace '[^0-9A-Fa-f]', '').ToUpperInvaria
 $normalizedActual = $actualSha1.Replace(':', '')
 if ($normalizedExpected -and $normalizedExpected -ne $normalizedActual) {
   throw "APK SHA1 不匹配：实际 $actualSha1，期望 $ExpectedSha1"
+}
+
+# Check class definitions in every DEX. A signed APK can still be unusable when
+# an incremental D8 build accidentally omits a class referenced during startup.
+$requiredClasses = @(
+  'Lcom/example/motonav/MotoNavApp;',
+  'Lcom/example/motonav/MainActivity;',
+  'Lcom/example/motonav/RideRecorder;',
+  'Lcom/example/motonav/BootBrand;',
+  'Lcom/example/motonav/MusicBridge;',
+  'Lcom/example/motonav/CrashLog;',
+  'Lcom/example/motonav/Keys;',
+  'Lcom/example/motonav/NaviBridge;',
+  'Lcom/example/motonav/AmapCaptureHost;',
+  'Landroidx/startup/R$string;',
+  'Landroidx/startup/InitializationProvider;'
+)
+$verifyTempRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot '.tools/tmp'))
+$verifyTemp = Join-Path $verifyTempRoot ('release-verify-' + [guid]::NewGuid().ToString('N'))
+$dexOutput = New-Object 'System.Collections.Generic.HashSet[string]'
+$zip = $null
+try {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  New-Item -ItemType Directory -Path $verifyTemp -Force | Out-Null
+  $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $ApkPath))
+  $dexEntries = @($zip.Entries | Where-Object { $_.FullName -match '^classes\d*\.dex$' })
+  if ($dexEntries.Count -eq 0) { throw 'APK 中没有 classes*.dex' }
+  foreach ($entry in $dexEntries) {
+    $dexPath = Join-Path $verifyTemp $entry.Name
+    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dexPath, $true)
+    $dump = (& $dexdump -l plain $dexPath 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw "dexdump 失败：$($entry.Name)`n$dump" }
+    foreach ($match in [regex]::Matches($dump, "Class descriptor\s*:\s*'([^']+)'")) {
+      [void]$dexOutput.Add($match.Groups[1].Value)
+    }
+  }
+  $missingClasses = @($requiredClasses | Where-Object { -not $dexOutput.Contains($_) })
+  if ($missingClasses.Count -gt 0) {
+    throw "APK 缺少启动必需类：$($missingClasses -join ', ')"
+  }
+}
+finally {
+  if ($zip) { $zip.Dispose() }
+  if (Test-Path -LiteralPath $verifyTemp) {
+    $resolvedTemp = (Resolve-Path -LiteralPath $verifyTemp).Path
+    if (-not [string]::Equals((Split-Path -Parent $resolvedTemp), $verifyTempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+      throw "拒绝清理项目临时目录以外的路径：$resolvedTemp"
+    }
+    Remove-Item -LiteralPath $verifyTemp -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 
 Write-Host "PASS: package=$($package.Groups[1].Value) version=$($package.Groups[3].Value)" -ForegroundColor Green

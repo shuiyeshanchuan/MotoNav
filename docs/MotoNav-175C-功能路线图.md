@@ -8,8 +8,8 @@
 
 ### 1.1 当前发布版本与发布位置
 
-- Android App：测试版已发布 `v8.3.54`（`versionCode 156`，GitHub Release：`motonav-v8.3.54`）；上一测试版为 `v8.3.53`（`versionCode 155`，GitHub Release：`motonav-v8.3.53`），上一正式版为 `v8.3.47`（`versionCode 150`）。测试版使用正式 Release 条目以便 App 自更新发现，发布说明明确标注测试性质。
-- 1.75C 固件：行驶信息页诊断测试版为 `v7.12.9-nav.9-ride-info-imu-test`（随当前 Release `motonav-v8.3.54` 继续提供；首次发布于 `motonav-v8.3.52`）；上一诊断测试版为 `v7.12.9-nav.8-imu-test`，上一正式版为 `v7.12.9-nav.6`。测试固件的 `deviceTested=false`，不能视为稳定版。
+- Android App：测试版已发布 `v8.3.55`（`versionCode 157`，GitHub Release：`motonav-v8.3.55`）；上一测试版为 `v8.3.54`（`versionCode 156`，GitHub Release：`motonav-v8.3.54`），上一正式版为 `v8.3.47`（`versionCode 150`）。测试版使用正式 Release 条目以便 App 自更新发现，发布说明明确标注测试性质。
+- 1.75C 固件：行驶信息页诊断测试版为 `v7.12.9-nav.9-ride-info-imu-test`（随当前 Release `motonav-v8.3.55` 继续提供；首次发布于 `motonav-v8.3.52`）；上一诊断测试版为 `v7.12.9-nav.8-imu-test`，上一正式版为 `v7.12.9-nav.6`。测试固件的 `deviceTested=false`，不能视为稳定版。
 - 正式发布仓库：`shuiyeshanchuan/MotoNav`；App 和圆屏 OTA 均从这个仓库的非草稿、非预发布 Release 获取文件。
 - 1.75C 测试 Release 的 OTA 索引指向带 `diagnostic=true` 的 `v7.12.9-nav.9-ride-info-imu-test`；该版本包含第四个行驶信息页面并保留 QMI8658 诊断采样。OTA 只使用 `*_app_0x10000.bin`，`*_full_0x0.bin` 仅用于 USB 救援。当前版本仅做停车和安全场地观察，不能用于事故判定或联系人通知；返回 `nav.6` 需要手动 USB 救援，直到另行发布更高版本的稳定固件。
 - 当前发布 APK 的包名为 `com.motonav.u2b4f81869feb4118bb152504f57650e3`，发布签名 SHA-1 为 `49:7D:D6:15:13:34:EA:38:CD:C1:0A:7C:EB:C2:57:42:FE:85:B8:5C`。
@@ -50,6 +50,7 @@
 - `v8.3.52` / `v7.12.9-nav.9-ride-info-imu-test` 测试版：Android 底栏增加“行驶信息”页，显示速度、三轴加速度和模长、三轴角速度和模长、重力向量估算倾角、温度、连接和采样健康；圆屏增加第四个行驶信息页，和导航、天气、音乐按相对画面方向左右循环切换。页面只展示数据，不启动事故判定或联系人通知。
 - `v8.3.53` OTA 修正版：Android 在 BLE 配对完成后限次重试 517 字节 MTU，并把签名 BEGIN 控制包上限从 500 调整为固件 `RXQ_MAX=512`；修复部分手机显示“蓝牙数据包不足以发送 OTA 签名”的问题。固件协议和 OTA 信任根不变，现有 `v7.12.9-nav.9-ride-info-imu-test` 可继续使用；若手机最终只能保持 23/185/247 字节 MTU，仍需重连或使用 USB 救援，不能拆分旧固件的签名 BEGIN 包。
 - `v8.3.54` Android 测试版：高级设置增加“四姿态静置基线”诊断。每次选择屏幕朝上/下/左/右后，前台采集至少 60 秒、至少 400 个有效样本；同时校验手机接收时间、板端时间、`STATUS.lastBoardMillis`、`HEALTH.samples`、健康计数、读错、缺口、饱和、重力范围和样本间隔。结果保存为本机可复制文本，包含三轴均值、总体标准差、最小/最大值、模长、温度和未补偿陀螺偏置；不写入传感器校准，不启动事故判定、短信、拨号或联系人通知。由于 nav.9 的 BLE 样本时间戳是发送时间，且可能重复发送缓存，冻结健康计数或状态板端时间会使采集失败。
+- `v8.3.55` Android 测试版：修复 Release 增量 dex 缓存不完整导致 `BootBrand`、`AmapCaptureHost` 和 AndroidX Startup 资源类缺失、App 在创建 `MainActivity` 前直接闪退的问题；发布流程改为 Release 全量 clean 构建，并由 `android/verify-release.ps1` 检查 APK 中的启动类定义。保留 `v8.3.54` 的静置基线诊断和安全边界。
 
 ### 1.3 已实现但仍需实机确认
 
