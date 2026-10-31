@@ -234,7 +234,8 @@ object AccidentRecordMonitor : BleLink.ImuListener {
 
     private fun csvLocked(c: AccidentRecordCoordinator): String {
         val out = StringBuilder()
-        out.append("# MotoNav P1 只记录；nav10 诊断流；不代表事故判定\n")
+        val firmware = BleLink.screenFirmware.ifBlank { "未知固件" }
+        out.append("# MotoNav P1 只记录；圆屏 $firmware；不代表事故判定\n")
         out.append("sequence,received_monotonic_ms,board_ms,ax_mps2,ay_mps2,az_mps2,gx_dps,gy_dps,gz_dps,temp_c,gps_lat,gps_lng,speed_kmh,gps_accuracy_m,gps_age_ms\n")
         for (frame in c.snapshot()) {
             val imu = frame.imu

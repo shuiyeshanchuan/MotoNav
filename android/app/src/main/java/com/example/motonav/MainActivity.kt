@@ -176,8 +176,9 @@ import kotlin.math.sqrt
  *   v8.3.58  配套圆屏 nav.11，统一四页横滑顺序和圆点顺序；行驶信息页使用固件中文字形。
  *   v8.3.59  修复 GitHub Release 返回顺序不稳定时只取旧 OTA 索引，确保选择最新 nav 固件。
  *   v8.3.60  P1 事故监测只记录模式：接入 nav10 IMU 诊断流和导航定位，保存本地脱敏记录；不判定事故、不通知联系人。
+ *   v8.3.61  只记录 CSV 自动写入实际圆屏固件版本，避免 nav11 数据被标成 nav10。
  */
-const val APP_VERSION = "v8.3.60"
+const val APP_VERSION = "v8.3.61"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
