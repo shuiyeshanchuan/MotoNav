@@ -44,3 +44,13 @@ powershell -ExecutionPolicy Bypass -File .\android\tests\run-persistence.ps1 `
 公开 WebMotorRouteTest 全部使用人工合成路线，测试多方案、连续几何、转向、稳定到达、途经点、错误响应和 URL 校验。真实行程响应与用户坐标不随源码发布。
 
 四风格及高德取图逻辑检查可执行 `./android/tests/run-raster.ps1 -KotlinStdlib '<kotlin-stdlib-2.0.21.jar路径>'`，需先编译 release。脚本使用 tests/jvm 图形适配器，输出只写到 .local。合成测试不代表真实禁摩限制或道路验证。
+
+## 固件版本排序回归
+
+`FirmwareUpdateClient` 的版本门控直接读取 release 构建产物。`nav.10-ride-info-imu-test` 带有描述后缀，必须按数字构建号排在 `nav.9-ride-info-imu-test` 后面；先完成 `assembleRelease`，再运行：
+
+```powershell
+.\android\tests\run-firmware-version.ps1 -KotlinStdlib '<kotlin-stdlib-2.0.21.jar路径>'
+```
+
+该检查调用实际编译出的 `FirmwareUpdateClient`，不复制版本解析逻辑。
