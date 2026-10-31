@@ -33,7 +33,12 @@ struct ImuPageTelemetry {
 // only quantised magnitudes makes the memory cost bounded and avoids retaining
 // a raw motion recording in the firmware process.
 static constexpr uint8_t IMU_DIAG_RING_SIZE = 64;
-static constexpr uint32_t IMU_DIAG_GAP_MS = 30;
+// The diagnostic reader runs from the shared main loop.  On the real 1.75C,
+// normal loop/I2C scheduling jitter has been measured at 46-47 ms even while
+// every sensor read succeeds.  Keep this threshold above that jitter so a
+// scheduler delay is not reported as a lost sample; this remains a health
+// diagnostic threshold, never an accident-detection threshold.
+static constexpr uint32_t IMU_DIAG_GAP_MS = 75;
 static constexpr float IMU_DIAG_GRAVITY_MIN = 7.5f;
 static constexpr float IMU_DIAG_GRAVITY_MAX = 12.5f;
 static constexpr float IMU_DIAG_STILL_GRAVITY_MIN = 8.5f;
