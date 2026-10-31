@@ -204,7 +204,7 @@ object BleLink {
     @Volatile var screenImuReadErrors = -1L
 
     interface ImuListener {
-        fun onImuStatus(status: AccidentImuSampleParser.Status)
+        fun onImuStatus(status: AccidentImuSampleParser.Status, receivedAtMonotonicMs: Long)
         fun onImuSample(sample: AccidentImuSampleParser.Sample)
         /** Optional P1 health summary; it never implies an incident decision. */
         fun onImuHealth(health: AccidentImuSampleParser.Health) {}
@@ -498,12 +498,12 @@ object BleLink {
         handler.postDelayed(mtuRetry, delayMs)
     }
 
-    private fun onNotify(bytes: ByteArray?) {
+    private fun onNotify(bytes: ByteArray?, receivedAtMonotonicMs: Long) {
         val msg = bytes?.toString(Charsets.UTF_8)?.trim() ?: return
         if (BleSession.confirms(msg, capabilityQuerySent)) markVerified()
         // Diagnostic frames are opt-in firmware output. Keep them out of the
         // normal protocol handlers and expose them only as raw evidence.
-        when (val imu = AccidentImuSampleParser.parse(msg, now())) {
+        when (val imu = AccidentImuSampleParser.parse(msg, receivedAtMonotonicMs)) {
             is AccidentImuSampleParser.Status -> {
                 screenImuStatus = msg
                 screenImuAddress = imu.address
@@ -513,7 +513,7 @@ object BleLink {
                 screenImuConfigured = imu.configured
                 screenImuStreamEnabled = imu.streamEnabled
                 screenImuReadErrors = imu.readErrors
-                imuListener?.let { listener -> runCatching { listener.onImuStatus(imu) } }
+                imuListener?.let { listener -> runCatching { listener.onImuStatus(imu, receivedAtMonotonicMs) } }
                 return
             }
             is AccidentImuSampleParser.Sample -> {
@@ -850,13 +850,15 @@ object BleLink {
 
         @Deprecated("Android 13 以下用这个")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+            val receivedAt = now()
             @Suppress("DEPRECATION") val value = c.value?.copyOf()
-            if (c.uuid == TX_UUID) onCurrent(g) { onNotify(value) }
+            if (c.uuid == TX_UUID) onCurrent(g) { onNotify(value, receivedAt) }
             else if (c.uuid == OTA_TX_UUID) onCurrent(g) { onOtaNotify(value) }
         }
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
+            val receivedAt = now()
             val copy = value.copyOf()
-            if (c.uuid == TX_UUID) onCurrent(g) { onNotify(copy) }
+            if (c.uuid == TX_UUID) onCurrent(g) { onNotify(copy, receivedAt) }
             else if (c.uuid == OTA_TX_UUID) onCurrent(g) { onOtaNotify(copy) }
         }
 

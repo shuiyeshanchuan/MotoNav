@@ -168,8 +168,10 @@ import kotlin.math.sqrt
  *         圆屏新增第四个横向循环页面（配合测试固件 v7.12.9-nav.9-ride-info-imu-test）。
  *   v8.3.53  修复部分手机在 BLE 配对完成前协商到 23 字节 MTU，导致 OTA 签名 BEGIN 包无法发送；
  *         认证后限次重试 MTU 517，并将控制包上限与圆屏 RXQ_MAX 对齐到 512 字节。
+ *   v8.3.54  高级诊断增加四姿态 60 秒 IMU 静置基线采集，记录均值、标准差、范围、温度、采样间隔和健康门控；
+ *         不自动写入零偏，不开启事故判定或联系人通知。
  */
-const val APP_VERSION = "v8.3.53"
+const val APP_VERSION = "v8.3.54"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -254,6 +256,8 @@ class MainActivity : AppCompatActivity() {
     private var rideInfoSamplingOwned = false
     private var rideInfoSamplingRequestedAt = 0L
 
+    private var imuBaselinePanel: ImuBaselinePanel? = null
+
     private fun buildMainPages(saved: Bundle?) {
         mainPages = MainPagesShell(this, saved, { index -> buildMainPage(index) }) { index ->
             hideKeyboard()
@@ -333,6 +337,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Keep the optional IMU stream tied to the visible ride information page. */
     private fun onMainPageSelected(index: Int) {
+        if (index != 3) imuBaselinePanel?.cancelCapture("已离开设置页，采集取消")
         if (index == 2) {
             BleLink.requestImuDiagnosticsStatus()
             ensureRideInfoSampling(true)
@@ -1812,6 +1817,13 @@ class MainActivity : AppCompatActivity() {
                 healthText +
                 (if (BleLink.screenImuStatus.isNotEmpty()) "\n原始状态：${BleLink.screenImuStatus}" else "")
         }
+        // Static baseline capture remains in the advanced diagnostic section so
+        // ordinary riding never starts a long-running sensor session.
+        imuBaselinePanel = ImuBaselinePanel(this)
+        card.addView(imuBaselinePanel, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(12); bottomMargin = dp(8)
+        })
         card.addView(divider(top = 8))
         val testRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(12), 0, dp(10)) }
         testRow.addView(pillButton("测试：左转 160 米", STROKE) { BleLink.send("L,160") }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
@@ -2179,7 +2191,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStop() {
+        imuBaselinePanel?.cancelCapture("App 已进入后台，采集取消")
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        imuBaselinePanel?.cancelCapture("页面已退出，采集取消")
         if (rideInfoSamplingOwned) {
             BleLink.setImuDiagnosticsStream(false)
             rideInfoSamplingOwned = false
