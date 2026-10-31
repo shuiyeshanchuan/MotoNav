@@ -34,13 +34,18 @@ object FirmwareUpdateClient {
         val notes: String
     )
 
-    /** Returns the newest non-prerelease GitHub Release that publishes a stable OTA index. */
+    /** Returns the newest firmware candidate across all non-prerelease Releases.
+     * GitHub's releases API is not guaranteed to return newly created tags first;
+     * selecting the first indexed release could therefore keep offering nav.10
+     * after nav.11 had already been published.
+     */
     fun check(board: String): Candidate {
         require(board == "175C" || board == "175") { "请先连接受支持的圆屏" }
         val releases = getJsonArray(
             "https://api.github.com/repos/$REPOSITORY/releases?per_page=30",
             MAX_RELEASES_BYTES
         )
+        var newest: Candidate? = null
         for (i in 0 until releases.length()) {
             val release = releases.optJSONObject(i) ?: continue
             if (release.optBoolean("draft") || release.optBoolean("prerelease")) continue
@@ -58,11 +63,12 @@ object FirmwareUpdateClient {
             if (!imageName.endsWith("_app_0x10000.bin")) continue
             val manifestUrl = assetUrl(assets, manifestName) ?: continue
             val imageUrl = assetUrl(assets, imageName) ?: continue
-            return Candidate(board, version, manifestUrl, imageUrl,
+            val candidate = Candidate(board, version, manifestUrl, imageUrl,
                 release.optString("name").ifBlank { release.optString("tag_name", "MotoNav 固件") },
                 release.optString("body").trim().take(1800))
+            if (newest == null || compareVersions(candidate.version, newest.version) > 0) newest = candidate
         }
-        error("GitHub 暂未发布适用于 $board 的稳定 OTA 固件")
+        return newest ?: error("GitHub 暂未发布适用于 $board 的稳定 OTA 固件")
     }
 
     /** Downloads the selected release and applies the same package checks as the offline picker. */

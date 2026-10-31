@@ -174,8 +174,9 @@ import kotlin.math.sqrt
  *   v8.3.56  修复 GitHub Release 列表超过固件清单上限导致圆屏 OTA 检查失败。
  *   v8.3.57  修复 nav.9 到 nav.10 的数字版本比较，避免诊断固件被误判为旧版本。
  *   v8.3.58  配套圆屏 nav.11，统一四页横滑顺序和圆点顺序；行驶信息页使用固件中文字形。
+ *   v8.3.59  修复 GitHub Release 返回顺序不稳定时只取旧 OTA 索引，确保选择最新 nav 固件。
  */
-const val APP_VERSION = "v8.3.58"
+const val APP_VERSION = "v8.3.59"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
