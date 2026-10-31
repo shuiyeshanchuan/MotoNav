@@ -295,6 +295,8 @@
 
 **当前记录模式原型：** Android `AccidentSafetyModel` 已实现 `DISABLED → ARMED → CANDIDATE → COUNTDOWN → RECORDED`，并提供 `CANCELLED`、`UNAVAILABLE` 终态；它只验证时序和传感器健康并记录本地事件，尚未接入 BLE 事故帧、联系人、短信、拨号或自动通知。固件 `ImuDiagnostics` 只用于诊断采样，默认构建宏为关闭状态，不能把诊断样本当作已经批准的事故协议。
 
+- 2026-10-31 外部参考审查：[Motorcycle-Event-Data-Recorder-ESP32](https://github.com/sohambhogaonkar/Motorcycle-Event-Data-Recorder-ESP32) 使用 MPU6050、NEO-6M、OLED、蜂鸣器和按键，主示例约 10 Hz，仅用加速度模长 `>2g` 与倾角 `>60°` 的同刻条件触发，随后显示 2 秒冲击页并进行 10 秒取消倒计时。它的取消流程、事件快照字段和紧急 UI 流程可作概念参考；主代码没有陀螺/速度/jerk 多源门控，SD 写入仍是占位流程，且仓库未见明确再利用许可证。结合本项目 QMI8658 四姿态数据、约 `-6.8°/s` 陀螺 X 轴偏置和当前 BLE 低频抽样，不能直接复制其阈值、传感器读取或联系人流程；仅保留“候选事件 → 倒计时 → 人工取消”的交互思路，继续按本路线图的高频板端环形缓冲、手机持久化 ACK 和封闭道路验证推进。
+
 - [ ] `[双方]` 建立 `DISABLED → SETUP → ARMED → CANDIDATE → CONFIRMING → ESCALATING → ACK/RECOVERED/CANCELLED` 状态机。只有用户明确开始骑行、IMU 自检通过、手机定位和 BLE 链路可用、联系人配置有效时才进入 `ARMED`；停车、运输、充电、维修和设备被拿起时退出监测。
 - [ ] `[烧录/OTA]` 第一阶段只做 QMI8658 探测和自检：读取 `WHO_AM_I`，复位并确认状态，运行驱动提供的加速度/陀螺仪硬件自检，检查静止时重力模长、陀螺零偏、噪声、采样间隔、FIFO/中断和饱和标志；记录实际地址、轴向布局和温度。任一项失败、超时或数据不连续时不得进入 `ARMED`，诊断页必须显示“无法保证事故通知”。
 - [x] `[OTA]` 已增加四姿态静置基线记录门控；当前记录到的约 `-7°/s` X 轴偏置不会自动抹除。驱动审计未发现明显 `×g`/`×dps` 单位换算错误；QMI8658 板级初始陀螺零偏规格可达约 `±10°/s`，硬件自检只验证响应，不等于静止零偏校准。需完成四姿态均值、标准差和温度复测后，才可评估 on-demand/host offset 校准，不能把截图单点当补偿值。
