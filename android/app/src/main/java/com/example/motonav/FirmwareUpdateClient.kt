@@ -107,8 +107,13 @@ object FirmwareUpdateClient {
         val match = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)(.*)$").matchEntire(raw)
             ?: return VersionParts(listOf(0, 0, 0), raw, null, raw)
         val tail = match.groupValues[4]
-        val channel = tail.trimStart('.', '-', '_').substringBeforeLast('.', missingDelimiterValue = "")
-        val build = Regex("(\\d+)$").find(tail)?.groupValues?.get(1)?.toIntOrNull()
+        // Build labels may have a suffix, for example nav.10-ride-info-imu-test.
+        // Extract the numeric channel build before comparing; lexical ordering
+        // would otherwise incorrectly place nav.10 before nav.9.
+        val channelBuild = Regex("^[-._]([A-Za-z][A-Za-z0-9]*)\\.(\\d+)(.*)$").matchEntire(tail)
+        val channel = channelBuild?.groupValues?.get(1)
+            ?: tail.trimStart('.', '-', '_').substringBeforeLast('.', missingDelimiterValue = "")
+        val build = channelBuild?.groupValues?.get(2)?.toIntOrNull()
         return VersionParts(listOf(match.groupValues[1].toInt(), match.groupValues[2].toInt(), match.groupValues[3].toInt()), channel, build, tail)
     }
 

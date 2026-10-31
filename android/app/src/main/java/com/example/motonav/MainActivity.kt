@@ -173,7 +173,7 @@ import kotlin.math.sqrt
  *   v8.3.55  修复 Release 增量 dex 缓存不完整导致启动类缺失；发布前增加 APK 启动类完整性校验。
  *   v8.3.56  修复 GitHub Release 列表超过固件清单上限导致圆屏 OTA 检查失败。
  */
-const val APP_VERSION = "v8.3.56"
+const val APP_VERSION = "v8.3.57"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG

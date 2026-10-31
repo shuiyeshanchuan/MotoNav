@@ -1,11 +1,11 @@
-# MotoNav v8.3.57 测试版 · 1.75C IMU 静置基线修复
+# MotoNav v8.3.57 测试版 · 1.75C IMU 静置基线与 OTA 顺序修复
 
 ## 本次发布
 
 - 圆屏测试固件：`v7.12.9-nav.10-ride-info-imu-test`。
 - 修复 `nav.9` 四姿态静置采集全部显示“IMU 健康摘要过期”的问题。设备实测主循环间隔为 14–47 ms，而旧版 30 ms 诊断阈值把正常调度抖动记成 `sampleGaps`。
 - 将静置诊断的缺口阈值调整为 75 ms。超过 75 ms 的停顿仍会记录为缺口；该阈值只用于低频静置诊断，不代表全速冲击采集能力。
-- Android App 不变，继续使用 `v8.3.56`。本 Release 只上传圆屏 OTA 资产，避免重复上传 52 MB APK。
+- Android App：`v8.3.57`，`versionCode 159`。修复 OTA 版本比较对 `nav.10` 的字典序误判，确保从 `nav.9` 能显示并安装本次圆屏更新。圆屏固件和 App 一起放在本 Release，手机无需手动切换 Release。
 
 ## OTA 文件
 
@@ -19,6 +19,7 @@
 - Arduino CLI 1.75C、32 MB Flash、`app5M_fat24M_32MB` 诊断构建通过。
 - OTA manifest RSA-SHA256 签名、公钥 ID、应用镜像 SHA-256、应用偏移和大小校验通过。
 - Android IMU 协议/静置基线回放测试：22 个场景全部通过（8 个样本解析、14 个基线门控）。14–47 ms 间隔不会记为缺口，76 ms 才会触发 75 ms 阈值。
+- 编译后的 `FirmwareUpdateClient` 版本顺序回归通过：`nav.10 > nav.9`、`power.15 > power.14`，旧版本不会被接受为更新。
 - `diagnostic=true`、`deviceTested=false` 保持不变。
 
 ## 重新采集步骤
