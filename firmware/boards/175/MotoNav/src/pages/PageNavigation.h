@@ -251,6 +251,24 @@ void touchVectorToCanvas(float &dx, float &dy) {
   else if (screenRot == 3) { dx = -oy; dy = ox; }
 }
 
+// The page IDs follow the implementation history (0=navigation, 1=weather,
+// 2=music, 3=ride info), while the user-facing circular order is music,
+// navigation, weather, ride info.  Resolve swipes through that logical order
+// instead of incrementing the page IDs, otherwise navigation→weather is
+// followed by music instead of ride info.
+int pageOrderIndex(int value) {
+  for (int i = 0; i < 4; ++i) {
+    if (PAGE_ORDER[i] == value) return i;
+  }
+  return 1;  // navigation is the default logical position
+}
+
+int pageAfterSwipe(int current, bool forward) {
+  int index = pageOrderIndex(current);
+  index = (index + (forward ? 1 : 3)) % 4;
+  return PAGE_ORDER[index];
+}
+
 // 手指在拖：(dx, dy) = 从按下到现在的位移
 void dragMove(int dx, int dy, unsigned long now) {
   if (dragBlocked) return;
@@ -262,7 +280,10 @@ void dragMove(int dx, int dy, unsigned long now) {
     if (abs(dx) < threshold && abs(dy) < threshold) return;
     if (abs(dx) <= abs(dy)) { dragBlocked = true; return; }
     dragSign = dx > 0 ? 1 : -1;
-    dragTarget = (page + (dragSign < 0 ? 1 : 2)) % 4;
+    // With the calibrated touch coordinates, a physical right swipe has
+    // dragSign < 0. Keep that direction as the forward direction in the
+    // logical music→navigation→weather→ride order.
+    dragTarget = pageAfterSwipe(page, dragSign < 0);
     if (!slidePrepare(dragTarget)) return;
     dragging = true;
     dragP = 0; dragV = 0; dragT = now;

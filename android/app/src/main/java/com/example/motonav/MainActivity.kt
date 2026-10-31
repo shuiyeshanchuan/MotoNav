@@ -172,8 +172,10 @@ import kotlin.math.sqrt
  *         不自动写入零偏，不开启事故判定或联系人通知。
  *   v8.3.55  修复 Release 增量 dex 缓存不完整导致启动类缺失；发布前增加 APK 启动类完整性校验。
  *   v8.3.56  修复 GitHub Release 列表超过固件清单上限导致圆屏 OTA 检查失败。
+ *   v8.3.57  修复 nav.9 到 nav.10 的数字版本比较，避免诊断固件被误判为旧版本。
+ *   v8.3.58  配套圆屏 nav.11，统一四页横滑顺序和圆点顺序；行驶信息页使用固件中文字形。
  */
-const val APP_VERSION = "v8.3.57"
+const val APP_VERSION = "v8.3.58"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG

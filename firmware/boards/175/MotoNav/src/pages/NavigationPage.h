@@ -41,7 +41,9 @@ void drawNavFrame() {
   onWaitScreen = false;                                 // v3.6 离开首页，猫猫不再动
   if (mapModeActive()) {
     mapWaitAt = 0; mapWaitExpired = false; mapUnavailableShown = false;
-    drawMapFrame(); return;
+    drawMapFrame();
+    drawPageDots();
+    return;
   }
   // After a fresh connection, navigation text can arrive before the map block.
   // Give map capture and BLE transfer time before showing the fallback page.
@@ -55,6 +57,7 @@ void drawNavFrame() {
       if (cruiseOn) printCentered("CRUISE", CX, 262, 4, C_WHITE);
       else printCentered(distText(navDist), CX, 262, 4, C_WHITE);
       if (gpsWeak) printCentered(posAt ? "POSITION APPROX" : "WAIT GPS", CX, 326, 2, C_ORANGE);
+      drawPageDots();
       needFlush = true;
       return;
     }
@@ -71,6 +74,7 @@ void drawNavFrame() {
     printCentered("CRUISE", CX, 300, 4, C_CYAN);
     printCentered(!mapOn ? "MAP OFF" : !posAt ? "WAIT GPS" : "MAP UNAVAILABLE",
                   CX, 350, 2, C_ORANGE);
+    drawPageDots();
     needFlush = true;
     return;
   }
@@ -122,5 +126,6 @@ void drawNavFrame() {
   if (mapOn && styleIdx() != ST_DRAGON)
     printCentered(!posAt ? "WAIT GPS" : mapUnavailableShown ? "MAP UNAVAILABLE" : "MAP LOADING",
                   CX, 427, 1, C_ORANGE);
+  drawPageDots();
   needFlush = true;
 }

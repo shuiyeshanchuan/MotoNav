@@ -99,12 +99,13 @@ void animateCat() {
 int page = 0;                               // 0 = 导航 / 首页，1 = 天气，2 = 音乐，3 = 行驶信息
 unsigned long pageAt = 0;
 
-// 页面顺序对应滑动位置：音乐、主页、天气、行驶信息；导航主页不显示。
+// 页面顺序对应滑动位置：音乐、导航、天气、行驶信息。四个页面都显示当前页圆点。
+// 页面编号是历史实现编号（0=导航、1=天气、2=音乐、3=行驶信息），
+// 手势和圆点都必须复用这一份顺序，避免再次出现页面循环与圆点不一致。
+static const uint8_t PAGE_ORDER[4] = {2, 0, 1, 3};
 void drawPageDots() {
-  if (page == 0 && inNav) return;
-  const int pageOrder[] = {2, 0, 1, 3};
   for (int i = 0; i < 4; i++) {
-    aaDisc(CX + (i - 1.5f) * 18, 444, 4, page == pageOrder[i] ? C_WHITE : 0x4208);
+    aaDisc(CX + (i - 1.5f) * 18, 444, 4, page == PAGE_ORDER[i] ? C_WHITE : 0x4208);
   }
 }
 
