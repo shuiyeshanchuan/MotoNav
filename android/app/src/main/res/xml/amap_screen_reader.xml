@@ -1,11 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 读取高德界面；用户从圆屏请求接听时，也可检查微信当前来电页的接听控件。 -->
+<!-- 仅用于读取高德导航界面；不具备模拟手势或系统截图能力。 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowContentChanged|typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
-    android:canPerformGestures="true"
-    android:canTakeScreenshot="true"
     android:notificationTimeout="500"
-    android:packageNames="com.autonavi.minimap,com.autonavi.amapauto,com.autonavi.amapautolite,com.tencent.mm" />
+    android:packageNames="com.autonavi.minimap,com.autonavi.amapauto,com.autonavi.amapautolite" />

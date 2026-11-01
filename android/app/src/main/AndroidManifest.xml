@@ -30,7 +30,6 @@
 
     <!-- v3.9 能看到手机上装的所有语音引擎（VoxSherpa、SherpaTTS 等） -->
     <queries>
-        <package android:name="com.tencent.mm" />
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
@@ -87,7 +86,6 @@
         </activity>
 
         <activity android:name=".RideHistoryActivity" android:exported="false" />
-        <activity android:name=".WechatGestureProbeActivity" android:exported="false" />
 
         <!-- v3.0 导航页 -->
         <activity
@@ -114,7 +112,7 @@
         <service
             android:name=".AmapScreenReader"
             android:exported="true"
-            android:label="MotoNav 读取高德界面与微信来电控制"
+            android:label="MotoNav 读取高德界面"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

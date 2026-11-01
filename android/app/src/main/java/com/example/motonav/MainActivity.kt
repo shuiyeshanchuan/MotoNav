@@ -178,8 +178,9 @@ import kotlin.math.sqrt
  *   v8.3.60  P1 事故监测只记录模式：接入 nav10 IMU 诊断流和导航定位，保存本地脱敏记录；不判定事故、不通知联系人。
  *   v8.3.61  只记录 CSV 自动写入实际圆屏固件版本，避免 nav11 数据被标成 nav10。
  *   v8.3.62  微信接听增加独立的一次点击诊断、截图标定与手势回调记录。
+ *   v8.3.63  删除微信接听与模拟点击验证，微信仅保留来电和消息显示。
  */
-const val APP_VERSION = "v8.3.62"
+const val APP_VERSION = "v8.3.63"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -1237,12 +1238,9 @@ class MainActivity : AppCompatActivity() {
             toggle({ CallWatcher.privacyMode }) { CallWatcher.setPrivacyMode(this, it) }))
         val wechatSub = label("", 12f, SUB).apply {
             setOnClickListener {
-                if (CallWatcher.wechatEnabled) {
-                    val settings = if (!AmapProbe.notifEnabled(this@MainActivity))
-                        Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                    else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
-                    try { startActivity(settings) }
-                    catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知或无障碍服务") }
+                if (CallWatcher.wechatEnabled && !AmapProbe.notifEnabled(this@MainActivity)) {
+                    try { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
+                    catch (_: Exception) { toast("请到系统设置里开启 MotoNav 通知使用权") }
                 }
             }
         }
@@ -1257,10 +1255,8 @@ class MainActivity : AppCompatActivity() {
             val access = AmapProbe.notifEnabled(this)
             wechatSub.text = if (CallWatcher.wechatEnabled && !access)
                 "需要通知使用权，点击这里前往系统设置"
-            else if (CallWatcher.wechatEnabled && !AmapProbe.screenEnabled(this))
-                "通知无接听动作时可选无障碍辅助；点击打开应用信息，右上角允许受限设置"
-            else "圆屏按住微信来电岛 0.5 秒尝试接听；实际接通取决于微信来电界面"
-            wechatSub.setTextColor(if (CallWatcher.wechatEnabled && (!access || !AmapProbe.screenEnabled(this))) AMBER else SUB)
+            else "仅显示微信来电和消息，微信电话请在手机接听；无需无障碍权限"
+            wechatSub.setTextColor(if (CallWatcher.wechatEnabled && !access) AMBER else SUB)
         }
         card.addView(settingRow("显示微信消息详情", "默认显示发送者和消息摘要；关闭后只显示发送者",
             toggle({ CallWatcher.wechatMessageDetails }) { CallWatcher.setWechatMessageDetails(this, it) }))
@@ -1760,9 +1756,6 @@ class MainActivity : AppCompatActivity() {
 
     /** 开发者选项：地图来源、屏幕速度、测试按钮、各种状态和原始数据 */
     private fun devSection(card: LinearLayout) {
-        card.addView(pillButton("微信接听专项验证", STROKE) {
-            startActivity(Intent(this@MainActivity, WechatGestureProbeActivity::class.java))
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { bottomMargin = dp(10) })
         // 状态（原来首页上的小地图行、帧率）
         val stat = label("", 12f, SUB).apply { setLineSpacing(0f, 1.15f) }
         card.addView(stat)
@@ -1908,8 +1901,7 @@ class MainActivity : AppCompatActivity() {
                     (if (NaviBridge.extraInfo.isNotEmpty()) "${NaviBridge.extraInfo}\n" else "") +
                     "巡航/安全提示：${NaviBridge.cruiseRaw}\n" +
                     "来电显示：${CallWatcher.lastInfo}（${CallWatcher.permsText(this)}）\n" +
-                    "微信接听诊断：${CallWatcher.wechatAnswerDiagnostic}\n" +
-                    "微信来电页：${AmapScreenReader.wechatAnswerUiDiagnostic}\n" +
+                    "微信通知：${CallWatcher.wechatAnswerDiagnostic}\n" +
                     "圆屏最后一次按下：${CallWatcher.lastTouch}\n" +
                     "音乐遥控：${MusicBridge.info}\n" +
                     "天气：${Weather.info}\n" +
