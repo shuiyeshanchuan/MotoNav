@@ -238,12 +238,14 @@ class AmapScreenReader : AccessibilityService() {
 
     override fun onServiceConnected() {
         connected = this
+        WechatGestureProbe.connected(this)
         AmapProbe.add("系统", "ac", "屏幕读取已连接")
         notifyWechatUiChanged()
     }
 
     override fun onDestroy() {
         if (connected === this) connected = null
+        WechatGestureProbe.disconnected(this)
         notifyWechatUiChanged()
         super.onDestroy()
     }
@@ -350,6 +352,7 @@ class AmapScreenReader : AccessibilityService() {
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         val pkg = e?.packageName?.toString() ?: return
         if (pkg == "com.tencent.mm") {
+            WechatGestureProbe.onWindowChanged()
             notifyWechatUiChanged()
             return
         }

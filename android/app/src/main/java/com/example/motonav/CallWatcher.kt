@@ -255,6 +255,9 @@ object CallWatcher {
     fun hasFreshWechatCall(): Boolean = wechatEnabled && !ringing &&
         wechatCallKey != null && wechatCallFresh()
 
+    /** Opaque, read-only identity for the explicitly armed local diagnostic. */
+    fun wechatCallSessionToken(): Long = if (hasFreshWechatCall()) wechatCallStartedAt else 0L
+
     private fun clearNotice() {
         main.removeCallbacks(noticeRefresh)
         main.removeCallbacks(clearWechatMessage)

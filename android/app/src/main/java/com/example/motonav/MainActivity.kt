@@ -177,8 +177,9 @@ import kotlin.math.sqrt
  *   v8.3.59  修复 GitHub Release 返回顺序不稳定时只取旧 OTA 索引，确保选择最新 nav 固件。
  *   v8.3.60  P1 事故监测只记录模式：接入 nav10 IMU 诊断流和导航定位，保存本地脱敏记录；不判定事故、不通知联系人。
  *   v8.3.61  只记录 CSV 自动写入实际圆屏固件版本，避免 nav11 数据被标成 nav10。
+ *   v8.3.62  微信接听增加独立的一次点击诊断、截图标定与手势回调记录。
  */
-const val APP_VERSION = "v8.3.61"
+const val APP_VERSION = "v8.3.62"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -1759,6 +1760,9 @@ class MainActivity : AppCompatActivity() {
 
     /** 开发者选项：地图来源、屏幕速度、测试按钮、各种状态和原始数据 */
     private fun devSection(card: LinearLayout) {
+        card.addView(pillButton("微信接听专项验证", STROKE) {
+            startActivity(Intent(this@MainActivity, WechatGestureProbeActivity::class.java))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { bottomMargin = dp(10) })
         // 状态（原来首页上的小地图行、帧率）
         val stat = label("", 12f, SUB).apply { setLineSpacing(0f, 1.15f) }
         card.addView(stat)
