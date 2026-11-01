@@ -120,6 +120,12 @@ object BleLink {
         screenImuConfigured = false
         screenImuStreamEnabled = false
         screenImuReadErrors = -1L
+        screenImuMountReference = null
+        imuMountReferenceReceivedAt = 0L
+        imuMountReferenceQueryAt = 0L
+        imuMountReferenceStartAt = 0L
+        imuMountReferenceSawCollection = false
+        imuMountReferenceTimedOut = false
         synchronized(lock) { writing = false; queue.clear(); bulkQ.clear() }
         try { old?.disconnect() } catch (_: Exception) {}
         try { old?.close() } catch (_: Exception) {}
@@ -202,6 +208,16 @@ object BleLink {
     @Volatile var screenImuConfigured = false
     @Volatile var screenImuStreamEnabled = false
     @Volatile var screenImuReadErrors = -1L
+    // The board owns and persists the installation reference. Never infer a
+    // successful calibration from a transmitted command or cache it per phone.
+    @Volatile var screenImuMountReference: ImuMountCalibration.Frame? = null
+        private set
+    @Volatile private var imuMountReferenceReceivedAt = 0L
+    private var imuMountReferenceQueryAt = 0L
+    private var imuMountReferenceStartAt = 0L
+    private var imuMountReferenceStartRevision = 0L
+    private var imuMountReferenceSawCollection = false
+    private var imuMountReferenceTimedOut = false
 
     interface ImuListener {
         fun onImuStatus(status: AccidentImuSampleParser.Status, receivedAtMonotonicMs: Long)
@@ -501,6 +517,21 @@ object BleLink {
     private fun onNotify(bytes: ByteArray?, receivedAtMonotonicMs: Long) {
         val msg = bytes?.toString(Charsets.UTF_8)?.trim() ?: return
         if (BleSession.confirms(msg, capabilityQuerySent)) markVerified()
+        if (msg.startsWith("IMUCAL,")) {
+            val reference = ImuMountCalibration.parse(msg) ?: return
+            screenImuMountReference = reference
+            imuMountReferenceReceivedAt = receivedAtMonotonicMs
+            if (imuMountReferenceStartAt != 0L) {
+                if (reference.state == 2) imuMountReferenceSawCollection = true
+                if (reference.state == 4 || reference.state == 0 ||
+                    reference.state == 3 && (reference.revision != imuMountReferenceStartRevision ||
+                        imuMountReferenceSawCollection)) {
+                    imuMountReferenceStartAt = 0L
+                    imuMountReferenceTimedOut = false
+                }
+            }
+            return
+        }
         // Diagnostic frames are opt-in firmware output. Keep them out of the
         // normal protocol handlers and expose them only as raw evidence.
         when (val imu = AccidentImuSampleParser.parse(msg, receivedAtMonotonicMs)) {
@@ -977,6 +1008,7 @@ object BleLink {
         msg == "#OTA?" -> "#OTA?"
         msg == "#BLE?" -> "#BLE?"
         msg.startsWith("#OTA,") -> "#OTA"
+        msg.startsWith("#IMUCAL") -> "#IMUCAL"
         // v6.3 "#D角度"、v7.2 "#L毫秒" 这类没有逗号的：按前两个字符算同一类（只留最新的）
         msg.startsWith("#") -> if (msg.contains(',')) msg.substringBefore(',') else msg.take(2)
         msg == "P" -> "P"
@@ -1006,7 +1038,7 @@ object BleLink {
             // not replay a status query or re-enable the stream after a BLE
             // reconnect unless the user asks for it again.
             if (k != "P" && k != "#GB?" && k != "#INFO?" && k != "#OTA?" &&
-                k != "#BLE?" && k != "#OTA" && k != "#IMU" && k != "#I") lastState[k] = msg
+                k != "#BLE?" && k != "#OTA" && k != "#IMU" && k != "#IMUCAL" && k != "#I") lastState[k] = msg
             enqueue(k, msg.toByteArray(Charsets.UTF_8))
         }
         pump()
@@ -1022,6 +1054,78 @@ object BleLink {
     fun requestImuDiagnosticsStatus() {
         if (!ready || !verified) return
         send("#IMU?")
+    }
+
+    /** Read-only polling is safe after reconnect; START is never replayed. */
+    fun requestImuMountReferenceIfNeeded() {
+        if (!ready || !verified || otaInProgress || maxWrite() < 96) return
+        val at = now()
+        if (imuMountReferenceStartAt != 0L && at - imuMountReferenceStartAt < 12_000L) return
+        if (imuMountReferenceQueryAt != 0L && at - imuMountReferenceQueryAt < 5_000L) return
+        if (screenImuMountReference != null && at - imuMountReferenceReceivedAt < 15_000L) return
+        imuMountReferenceQueryAt = at
+        send("#IMUCAL?")
+    }
+
+    fun imuMountReferenceBusy(): Boolean =
+        imuMountReferenceStartAt != 0L && now() - imuMountReferenceStartAt < 15_000L ||
+            screenImuMountReference?.state == 2 && now() - imuMountReferenceReceivedAt < 10_000L
+
+    fun imuMountReferenceForDisplay(): ImuMountCalibration.Frame? =
+        screenImuMountReference?.takeIf { imuMountReferenceStartAt == 0L && it.state != 2 }
+
+    fun startImuMountReference(): String {
+        if (!ready || !verified) return "请先连接并完成圆屏配对"
+        if (otaInProgress) return "固件升级期间不能校准"
+        if (maxWrite() < 96) return "蓝牙数据包过小，无法读取校准结果，请重连圆屏"
+        val reference = screenImuMountReference ?: return "圆屏尚未返回安装校准状态，请先更新圆屏测试固件"
+        if (reference.state == 0) return "当前圆屏固件不支持安装姿态校准"
+        if (imuMountReferenceBusy()) return "正在校准，请保持车辆扶正和静止"
+        imuMountReferenceStartRevision = reference.revision
+        imuMountReferenceSawCollection = false
+        imuMountReferenceTimedOut = false
+        imuMountReferenceStartAt = now()
+        send("#IMUCAL,START")
+        return "已请求圆屏采集，请保持扶正、静止约 5 秒；等待圆屏确认保存"
+    }
+
+    fun imuMountReferenceStatusText(): String {
+        if (!ready || !verified) return "未连接圆屏，安装基准尚未读取"
+        if (maxWrite() < 96) return "蓝牙数据包过小，请重连后读取安装基准"
+        val reference = screenImuMountReference ?: return "尚未收到安装基准；请使用支持安装校准的圆屏测试固件"
+        // A five-second capture should have produced a terminal frame. If the
+        // notification was lost, stop presenting the stale request as active;
+        // an old persisted reference remains usable, but this attempt is not
+        // reported as successful.
+        if (imuMountReferenceStartAt != 0L && now() - imuMountReferenceStartAt >= 15_000L) {
+            imuMountReferenceStartAt = 0L
+            imuMountReferenceSawCollection = false
+            imuMountReferenceTimedOut = true
+        }
+        if (imuMountReferenceStartAt != 0L && reference.state != 2) {
+            return if (now() - imuMountReferenceStartAt < 15_000L) "已请求校准，等待圆屏确认"
+                else "未收到校准结果，尚未确认成功；正在重新读取圆屏状态"
+        }
+        return when (reference.state) {
+            0 -> "当前固件不支持安装校准，请先更新圆屏测试固件"
+            1 -> "未校准：请固定圆屏、扶正车辆并停稳后校准"
+              2 -> "校准结果未收到；本次未确认成功" +
+                  if (reference.hasReference()) "，已保留原安装基准" else "，请重新校准"
+            3 -> if (imuMountReferenceTimedOut) "本次校准未收到新结果，已保留原安装基准"
+                else "安装基准已由圆屏保存，手机与圆屏共用此基准"
+            else -> {
+                val reason = when (reference.reason) {
+                    1 -> "检测到晃动"
+                    2 -> "IMU 健康或读取异常"
+                    3 -> "采样不连续"
+                    4 -> "圆屏保存失败"
+                    5 -> "采集超时"
+                    6 -> "检测到车辆移动"
+                    else -> "圆屏未完成校准"
+                }
+                "校准失败：$reason；" + if (reference.hasReference()) "已保留原安装基准" else "仍未校准"
+            }
+        }
     }
 
     /** v7.9 发一次性的事件（到达统计、途经点）：不记进“重连补发”，免得重连后又放一遍特效 */

@@ -41,6 +41,48 @@ public final class FirmwareVersionOrderingTest {
         check(!policy.isDiagnosticAssetName(
                         "v7.12.9-nav.6", "nav6_manifest.json", "nav6_app_0x10000.bin"),
                 "formal nav.6 image remains eligible for stable OTA");
+        check(policy.isNotOlder(
+                        "v7.12.9-nav.12-mount-reference-imu-test",
+                        "v7.12.9-nav.11-ride-info-ui-fix"),
+                "explicit diagnostic updates can advance nav.11 to nav.12");
+        check(!policy.isNotOlder(
+                        "v7.12.9-nav.11-ride-info-ui-fix",
+                        "v7.12.9-nav.12-mount-reference-imu-test"),
+                "nav.12 cannot be replaced by older nav.11");
+
+        String stable = "motonav-ota-stable.json";
+        String diagnostic = "motonav-ota-diagnostic.json";
+        // Both choices retain formal stable releases. Neither choice promotes a
+        // prerelease's stable index into an ordinary stable update.
+        for (boolean includeDiagnostic : new boolean[] {false, true}) {
+            check(policy.isIndexAllowed(stable, 1, "stable", includeDiagnostic, false),
+                    "formal stable candidate remains available with opt-in=" + includeDiagnostic);
+            check(!policy.isIndexAllowed(stable, 1, "stable", includeDiagnostic, true),
+                    "prerelease stable index is excluded with opt-in=" + includeDiagnostic);
+            check(!policy.isIndexAllowed(stable, 1, "diagnostic", includeDiagnostic, false),
+                    "diagnostic channel cannot masquerade as the stable index");
+            check(!policy.isIndexAllowed(diagnostic, 1, "stable", includeDiagnostic, false),
+                    "stable channel cannot masquerade as the diagnostic index");
+            check(!policy.isIndexAllowed("other-ota.json", 1, "stable", includeDiagnostic, false),
+                    "unknown index names are excluded");
+            for (boolean prerelease : new boolean[] {false, true}) {
+                check(policy.isIndexAllowed(diagnostic, 1, "diagnostic", includeDiagnostic, prerelease)
+                                == includeDiagnostic,
+                        "diagnostic index requires explicit opt-in; prerelease=" + prerelease);
+            }
+            for (int schema : new int[] {0, 2}) {
+                check(!policy.isIndexAllowed(stable, schema, "stable", includeDiagnostic, false),
+                        "unsupported stable index schema is rejected");
+                check(!policy.isIndexAllowed(diagnostic, schema, "diagnostic", includeDiagnostic, false),
+                        "unsupported diagnostic index schema is rejected");
+            }
+        }
+        check(!policy.isIndexAllowed(diagnostic, 1, "Diagnostic", true, false),
+                "diagnostic channel must match the supported spelling exactly");
+        check(policy.isDiagnosticAssetName(
+                        "v7.12.9-nav.12-mount-reference-imu-test",
+                        "nav12_manifest.json", "nav12_app_0x10000.bin"),
+                "nav.12 remains classified diagnostic and blocked in stable indices");
         System.out.println("Firmware version ordering: " + checks + " checks passed");
     }
 }

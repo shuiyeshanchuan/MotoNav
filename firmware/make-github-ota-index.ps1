@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory)][string]$ManifestPath,
-  [ValidateSet('stable')][string]$Channel = 'stable',
+  [ValidateSet('stable','diagnostic')][string]$Channel = 'stable',
   [string]$OutPath = ''
 )
 
@@ -12,6 +12,12 @@ if ($manifest.board -ne 'Waveshare ESP32-S3-Touch-AMOLED-1.75C' -or
     $manifest.flashSize -ne '32MB' -or $manifest.partition -ne 'app5M_fat24M_32MB' -or
     $manifest.verifiedApplicationOffset -ne '0x10000') {
   throw 'OTA 索引只接受已验证的 1.75C / 32MB / 0x10000 manifest'
+}
+if ($Channel -eq 'diagnostic' -and -not [bool]$manifest.diagnostic) {
+  throw 'diagnostic 索引必须指向 diagnostic manifest'
+}
+if ($Channel -eq 'stable' -and [bool]$manifest.diagnostic) {
+  throw 'stable 索引不能指向 diagnostic manifest'
 }
 if (-not $manifest.otaSignature -or $manifest.otaSignature.algorithm -ne 'RSA-SHA256-PKCS1v1.5' -or
     $manifest.otaSignature.keyId -notmatch '^[0-9a-f]{16}$') {

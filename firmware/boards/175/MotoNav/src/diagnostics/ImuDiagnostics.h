@@ -23,6 +23,8 @@ struct ImuPageTelemetry {
   uint32_t lastSampleAt = 0;
 };
 
+#include "ImuMountReference.h"
+
 #if MOTONAV_IMU_DIAGNOSTICS
 
 #include <ImuDrv.hpp>
@@ -117,6 +119,115 @@ struct ImuDiagnosticsState {
 };
 
 ImuDiagnosticsState imuDiagnostics;
+
+static ImuMount::Reference imuMountReference = {};
+static ImuMount::Collector imuMountCollector;
+static bool imuMountStatusPending = false;
+static uint32_t imuMountLastProgressAt = 0;
+static uint32_t imuMountStartReadErrors = 0;
+
+inline void loadImuMountReference() {
+  Preferences preferences;
+  if (!preferences.begin("mn-mount", true)) return;
+  ImuMount::Reference saved = {};
+  const bool loaded = preferences.getBytesLength("reference") == sizeof(saved) &&
+      preferences.getBytes("reference", &saved, sizeof(saved)) == sizeof(saved);
+  preferences.end();
+  if (loaded && ImuMount::referenceValid(saved)) {
+    imuMountReference = saved;
+    imuMountCollector.state = ImuMount::READY;
+  }
+}
+
+inline bool readImuMountReference(float &ax, float &ay, float &az, uint32_t &revision) {
+  const bool valid = ImuMount::referenceValid(imuMountReference);
+  ax = valid ? imuMountReference.ax : 0.0f;
+  ay = valid ? imuMountReference.ay : 0.0f;
+  az = valid ? imuMountReference.az : 0.0f;
+  revision = valid ? imuMountReference.revision : 0;
+  return valid;
+}
+
+inline uint8_t imuMountReferenceState() { return imuMountCollector.state; }
+
+inline bool imuMountSensorHealthy() {
+  return imuDiagnostics.present && imuDiagnostics.configured && imuDiagnostics.selfTestOk;
+}
+
+inline void requestImuMountReferenceStatus() { imuMountStatusPending = true; }
+
+inline void startImuMountReference() {
+  // Duplicate commands query progress; they cannot restart or prolong a capture.
+  if (imuMountCollector.state == ImuMount::COLLECTING) {
+    requestImuMountReferenceStatus();
+    return;
+  }
+  const uint32_t now = millis();
+  imuMountStartReadErrors = imuDiagnostics.readErrors;
+  imuMountCollector.start(now, imuMountSensorHealthy() && imuDiagnostics.samples > 0 &&
+      now - imuDiagnostics.lastSampleAt <= ImuMount::MAX_GAP_MS);
+  // Existing speed is only a conservative rejection gate, never proof of stillness.
+  if (speedKmh > 3) imuMountCollector.fail(ImuMount::SPEED);
+  imuMountLastProgressAt = now;
+  requestImuMountReferenceStatus();
+}
+
+inline void finishImuMountReference() {
+  if (imuMountCollector.state != ImuMount::READY) return;
+  // Only this explicit collection result is persisted. Existing raw samples and
+  // gyro bias are never altered, and a failed replacement retains the old reference.
+  const uint32_t revision = ImuMount::referenceValid(imuMountReference) ? imuMountReference.revision : 0;
+  if (revision == UINT32_MAX) { imuMountCollector.fail(ImuMount::SAVE); return; }
+  const ImuMount::Reference candidate = ImuMount::makeReference(revision + 1,
+      imuMountCollector.accel[0].mean, imuMountCollector.accel[1].mean, imuMountCollector.accel[2].mean);
+  Preferences preferences;
+  if (!preferences.begin("mn-mount", false)) { imuMountCollector.fail(ImuMount::SAVE); return; }
+  // NVS writes one versioned blob atomically rather than individual axis keys.
+  const bool saved = preferences.putBytes("reference", &candidate, sizeof(candidate)) == sizeof(candidate);
+  preferences.end();
+  if (!saved) { imuMountCollector.fail(ImuMount::SAVE); return; }
+  imuMountReference = candidate;
+}
+
+inline void imuMountReferenceTick(uint32_t now) {
+  if (imuMountCollector.state != ImuMount::COLLECTING) return;
+  const ImuMount::State previous = imuMountCollector.state;
+  imuMountCollector.tick(now, imuMountSensorHealthy() &&
+      imuDiagnostics.readErrors == imuMountStartReadErrors);
+  if (speedKmh > 3) imuMountCollector.fail(ImuMount::SPEED);
+  if (previous != imuMountCollector.state || now - imuMountLastProgressAt >= 1000) {
+    imuMountLastProgressAt = now;
+    requestImuMountReferenceStatus();
+  }
+}
+
+inline void recordImuMountSample(uint32_t now, const AccelerometerData &accel, const GyroscopeData &gyro) {
+  if (imuMountCollector.state != ImuMount::COLLECTING) return;
+  const ImuMount::State previous = imuMountCollector.state;
+  const bool saturated = imuDiagnosticRawSaturated(accel.raw.x) || imuDiagnosticRawSaturated(accel.raw.y) ||
+      imuDiagnosticRawSaturated(accel.raw.z) || imuDiagnosticRawSaturated(gyro.raw.x) ||
+      imuDiagnosticRawSaturated(gyro.raw.y) || imuDiagnosticRawSaturated(gyro.raw.z);
+  imuMountCollector.add(now, accel.mps2.x, accel.mps2.y, accel.mps2.z, gyro.dps.x, gyro.dps.y, gyro.dps.z,
+      imuMountSensorHealthy() && imuDiagnostics.readErrors == imuMountStartReadErrors, saturated);
+  if (imuMountCollector.state == ImuMount::READY) finishImuMountReference();
+  if (previous != imuMountCollector.state) requestImuMountReferenceStatus();
+}
+
+inline void imuMountReferenceNotifyTick() {
+  if (!imuMountStatusPending || !txChar || !bleConnected || !bleAuthed) return;
+  float ax, ay, az;
+  uint32_t revision;
+  readImuMountReference(ax, ay, az, revision);
+  char status[144];
+  const int size = snprintf(status, sizeof(status), "IMUCAL,1,%u,%lu,%.5f,%.5f,%.5f,%lu,%u",
+      static_cast<unsigned int>(imuMountCollector.state), static_cast<unsigned long>(revision), ax, ay, az,
+      static_cast<unsigned long>(imuMountCollector.count), static_cast<unsigned int>(imuMountCollector.reason));
+  if (size > 0 && static_cast<size_t>(size) < sizeof(status)) {
+    txChar->setValue((uint8_t *)status, static_cast<size_t>(size));
+    txChar->notify();
+    imuMountStatusPending = false;
+  }
+}
 
 inline void recordImuDiagnosticSample(uint32_t now,
                                       const AccelerometerData &accel,
@@ -220,6 +331,7 @@ inline int formatImuDiagnosticHealth(char *out, size_t capacity) {
 inline void initImuDiagnostics() {
   if (imuDiagnostics.beginAttempted) return;
   imuDiagnostics.beginAttempted = true;
+  loadImuMountReference();
 
   Serial.printf("IMU diag: begin SDA=%d SCL=%d addr candidates=0x%02X/0x%02X\n",
                 IIC_SDA, IIC_SCL, QMI8658_L_SLAVE_ADDRESS,
@@ -294,9 +406,10 @@ inline void initImuDiagnostics() {
 }
 
 inline void imuDiagnosticsTick() {
+  const uint32_t now = millis();
+  imuMountReferenceTick(now);
   if (!imuDiagnostics.configured) return;
 
-  const uint32_t now = millis();
   // The main loop normally runs around 10 ms.  Keep the diagnostic reader
   // non-blocking and avoid duplicate samples when the sensor is not ready.
   if (now - imuDiagnostics.lastSampleAt < 5) return;
@@ -312,6 +425,7 @@ inline void imuDiagnosticsTick() {
       !isfinite(gyro.dps.x) || !isfinite(gyro.dps.y) ||
       !isfinite(gyro.dps.z) || !isfinite(accel.temperature)) {
     ++imuDiagnostics.readErrors;
+    imuMountReferenceTick(now);
     return;
   }
 
@@ -325,6 +439,7 @@ inline void imuDiagnosticsTick() {
   imuDiagnostics.temperature = accel.temperature;
   recordImuDiagnosticSample(now, accel, gyro);
   ++imuDiagnostics.samples;
+  recordImuMountSample(now, accel, gyro);
 
   // CSV is intentionally serial-only.  Do not add it to the BLE protocol or
   // the normal device status packets before a sampling format is reviewed.
@@ -360,6 +475,7 @@ inline void requestImuDiagnosticsStatus() {
 }
 
 inline void imuDiagnosticsNotifyTick() {
+  imuMountReferenceNotifyTick();
   if (!imuDiagnostics.statusPending && !imuDiagnostics.streamEnabled) return;
   if (!txChar || !bleConnected || !bleAuthed) return;
 
@@ -453,9 +569,24 @@ inline bool readImuPageTelemetry(ImuPageTelemetry &out) {
 
 // Keep the call sites present in every build while compiling the diagnostic
 // implementation and SensorLib interface out of the release image.
+static bool imuMountUnsupportedStatusPending = false;
+inline void requestImuMountReferenceStatus() { imuMountUnsupportedStatusPending = true; }
+inline void startImuMountReference() { requestImuMountReferenceStatus(); }
+inline uint8_t imuMountReferenceState() { return ImuMount::UNSUPPORTED; }
+inline bool readImuMountReference(float &ax, float &ay, float &az, uint32_t &revision) {
+  ax = ay = az = 0.0f;
+  revision = 0;
+  return false;
+}
 inline void initImuDiagnostics() {}
 inline void imuDiagnosticsTick() {}
-inline void imuDiagnosticsNotifyTick() {}
+inline void imuDiagnosticsNotifyTick() {
+  if (!imuMountUnsupportedStatusPending || !txChar || !bleConnected || !bleAuthed) return;
+  static const char status[] = "IMUCAL,1,0,0,0.00000,0.00000,0.00000,0,0";
+  txChar->setValue((uint8_t *)status, sizeof(status) - 1);
+  txChar->notify();
+  imuMountUnsupportedStatusPending = false;
+}
 inline void setImuDiagnosticsStream(bool) {}
 inline void requestImuDiagnosticsStatus() {}
 

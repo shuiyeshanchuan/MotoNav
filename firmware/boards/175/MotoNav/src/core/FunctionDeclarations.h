@@ -225,6 +225,8 @@ void imuDiagnosticsTick();
 void imuDiagnosticsNotifyTick();
 void setImuDiagnosticsStream(bool enabled);
 void requestImuDiagnosticsStatus();
+void requestImuMountReferenceStatus();
+void startImuMountReference();
 void setup();
 void idlePowerOffShutdown();
 void drawTrafficLightLab(uint32_t now);

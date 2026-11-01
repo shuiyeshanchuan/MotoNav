@@ -64,19 +64,21 @@ void drawRideInfo() {
   const float accel = available ? rideVectorMagnitude(telemetry.ax, telemetry.ay, telemetry.az) : -1.0f;
   const float gyro = available ? rideVectorMagnitude(telemetry.gx, telemetry.gy, telemetry.gz) : -1.0f;
   float tilt = -1.0f;
-  if (available && accel > 0.01f && isfinite(telemetry.az)) {
-    float vertical = fabsf(telemetry.az) / accel;
-    vertical = constrain(vertical, 0.0f, 1.0f);
-    tilt = acosf(vertical) * 57.2957795f;
+  float refAx, refAy, refAz;
+  uint32_t mountRevision;
+  const bool mountReady = readImuMountReference(refAx, refAy, refAz, mountRevision);
+  const bool mountCollecting = imuMountReferenceState() == ImuMount::COLLECTING;
+  if (available && mountReady && !mountCollecting) {
+    tilt = ImuMount::relativeTiltDeg(refAx, refAy, refAz, telemetry.ax, telemetry.ay, telemetry.az);
   }
 
   const RideCnGlyph accelLabel[] = {RIDE_CN_6, RIDE_CN_4, RIDE_CN_5};
   const RideCnGlyph gyroLabel[] = {RIDE_CN_7, RIDE_CN_4, RIDE_CN_5};
-  const RideCnGlyph tiltLabel[] = {RIDE_CN_8, RIDE_CN_7};
+  const RideCnGlyph tiltLabel[] = {RIDE_CN_31, RIDE_CN_32, RIDE_CN_8, RIDE_CN_33};
   const RideCnGlyph tempLabel[] = {RIDE_CN_9, RIDE_CN_10};
   drawRideMetricCn(48, 186, 174, 78, accelLabel, 3, rideMetricValue(accel, "m/s2"), dataColor);
   drawRideMetricCn(258, 186, 174, 78, gyroLabel, 3, rideMetricValue(gyro, "dps"), dataColor);
-  drawRideMetricCn(48, 278, 174, 78, tiltLabel, 2, rideMetricValue(tilt, "deg"), dataColor);
+  drawRideMetricCn(48, 278, 174, 78, tiltLabel, 4, rideMetricValue(tilt, "deg"), dataColor);
   drawRideMetricCn(258, 278, 174, 78, tempLabel, 2, rideMetricValue(available ? telemetry.temperature : -1.0f, "C"), dataColor);
 
   if (!available) {
@@ -85,8 +87,16 @@ void drawRideInfo() {
     drawRideCnText(unavailable, 6, CX, 378, C_ORANGE, -1);
     drawRideCnText(normalNoSensor, 8, CX, 402, C_GREY, -2);
   } else {
-    const RideCnGlyph sampling[] = {RIDE_CN_24, RIDE_CN_25, RIDE_CN_26, RIDE_CN_27};
-    drawRideCnText(sampling, 4, CX, 382, C_GREEN, -1);
+    if (mountCollecting) {
+      const RideCnGlyph calibrating[] = {RIDE_CN_34, RIDE_CN_35, RIDE_CN_36, RIDE_CN_37, RIDE_CN_38};
+      drawRideCnText(calibrating, 5, CX, 382, C_ORANGE, -1);
+    } else if (!mountReady) {
+      const RideCnGlyph uncalibrated[] = {RIDE_CN_39, RIDE_CN_34, RIDE_CN_35, RIDE_CN_36, RIDE_CN_37};
+      drawRideCnText(uncalibrated, 5, CX, 382, C_ORANGE, -1);
+    } else {
+      const RideCnGlyph staticReference[] = {RIDE_CN_40, RIDE_CN_41, RIDE_CN_42, RIDE_CN_43};
+      drawRideCnText(staticReference, 4, CX, 382, C_GREY, -1);
+    }
     const RideCnGlyph sampleWord[] = {RIDE_CN_27, RIDE_CN_28};
     const RideCnGlyph errorWord[] = {RIDE_CN_29, RIDE_CN_30};
     drawRideCnText(sampleWord, 2, CX - 60, 405, C_GREY, -2);

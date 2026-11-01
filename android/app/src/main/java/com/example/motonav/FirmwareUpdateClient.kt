@@ -9,13 +9,15 @@ import java.net.URL
 /**
  * Reads signed OTA candidates from MotoNav GitHub Releases.
  *
- * Each stable firmware release contains motonav-ota-stable.json. The index may
+ * Stable updates use motonav-ota-stable.json; explicitly requested diagnostic
+ * updates also use motonav-ota-diagnostic.json. Each index may
  * name only assets from that same GitHub release; the image remains protected
  * by the RSA signature verified by the round screen before it is installed.
  */
 object FirmwareUpdateClient {
     private const val REPOSITORY = "shuiyeshanchuan/MotoNav"
     private const val INDEX_ASSET = "motonav-ota-stable.json"
+    private const val DIAGNOSTIC_INDEX_ASSET = "motonav-ota-diagnostic.json"
     // The GitHub releases API includes metadata for every asset in every
     // release. It is larger than an individual OTA manifest and grows as
     // releases accumulate, so it needs its own bounded limit.
@@ -31,46 +33,59 @@ object FirmwareUpdateClient {
         val manifestUrl: String,
         val imageUrl: String,
         val releaseName: String,
-        val notes: String
+        val notes: String,
+        val diagnostic: Boolean = false
     )
 
-    /** Returns the newest formal firmware candidate across all non-prerelease Releases.
+    /** Returns the newest allowed firmware candidate across GitHub Releases.
      * GitHub's releases API is not guaranteed to return newly created tags first.
      * Diagnostic images are deliberately excluded from the ordinary stable update
-     * path, even when a historical manifest incorrectly labels them stable. This
-     * keeps a nav10 device from being offered the unverified nav11 test image.
+     * path, even when a historical manifest incorrectly labels them stable.
+     * Diagnostic candidates require an explicit request and a separate index;
+     * ordinary update checks retain the existing stable-only behavior.
      */
-    fun check(board: String): Candidate {
+    fun check(board: String, includeDiagnostic: Boolean = false): Candidate {
         require(board == "175C" || board == "175") { "请先连接受支持的圆屏" }
         val releases = getJsonArray(
             "https://api.github.com/repos/$REPOSITORY/releases?per_page=30",
             MAX_RELEASES_BYTES
         )
+        val indexNames = if (includeDiagnostic) listOf(INDEX_ASSET, DIAGNOSTIC_INDEX_ASSET)
+            else listOf(INDEX_ASSET)
         var newest: Candidate? = null
         for (i in 0 until releases.length()) {
             val release = releases.optJSONObject(i) ?: continue
-            if (release.optBoolean("draft") || release.optBoolean("prerelease")) continue
+            if (release.optBoolean("draft")) continue
             val assets = release.optJSONArray("assets") ?: continue
-            val indexUrl = assetUrl(assets, INDEX_ASSET) ?: continue
-            val index = try { JSONObject(String(download(indexUrl, MAX_MANIFEST_BYTES), Charsets.UTF_8)) }
-            catch (_: Exception) { continue }
-            if (index.optInt("schema") != 1 || index.optString("channel") != "stable") continue
-            val items = index.optJSONArray("firmwares") ?: continue
-            val item = (0 until items.length()).mapNotNull { items.optJSONObject(it) }
-                .firstOrNull { it.optString("board") == board } ?: continue
-            val version = safeVersion(item.optString("version"))
-            val manifestName = safeAssetName(item.optString("manifestAsset"))
-            val imageName = safeAssetName(item.optString("imageAsset"))
-            if (!imageName.endsWith("_app_0x10000.bin")) continue
-            if (isDiagnosticAsset(version, manifestName, imageName)) continue
-            val manifestUrl = assetUrl(assets, manifestName) ?: continue
-            val imageUrl = assetUrl(assets, imageName) ?: continue
-            val candidate = Candidate(board, version, manifestUrl, imageUrl,
-                release.optString("name").ifBlank { release.optString("tag_name", "MotoNav 固件") },
-                release.optString("body").trim().take(1800))
-            if (newest == null || compareVersions(candidate.version, newest.version) > 0) newest = candidate
+            for (indexName in indexNames) {
+                // A prerelease can publish a diagnostic index, never a stable candidate.
+                if (release.optBoolean("prerelease") && indexName == INDEX_ASSET) continue
+                val indexUrl = assetUrl(assets, indexName) ?: continue
+                val index = try { JSONObject(String(download(indexUrl, MAX_MANIFEST_BYTES), Charsets.UTF_8)) }
+                catch (_: Exception) { continue }
+                if (!isIndexAllowed(indexName, index.optInt("schema"), index.optString("channel"),
+                        includeDiagnostic, release.optBoolean("prerelease"))) continue
+                val diagnostic = indexName == DIAGNOSTIC_INDEX_ASSET
+                val items = index.optJSONArray("firmwares") ?: continue
+                val item = (0 until items.length()).mapNotNull { items.optJSONObject(it) }
+                    .firstOrNull { it.optString("board") == board } ?: continue
+                val version = runCatching { safeVersion(item.optString("version")) }.getOrNull() ?: continue
+                val manifestName = runCatching { safeAssetName(item.optString("manifestAsset")) }.getOrNull() ?: continue
+                val imageName = runCatching { safeAssetName(item.optString("imageAsset")) }.getOrNull() ?: continue
+                if (!imageName.endsWith("_app_0x10000.bin")) continue
+                if (!diagnostic && isDiagnosticAsset(version, manifestName, imageName)) continue
+                val manifestUrl = assetUrl(assets, manifestName) ?: continue
+                val imageUrl = assetUrl(assets, imageName) ?: continue
+                val candidate = Candidate(board, version, manifestUrl, imageUrl,
+                    release.optString("name").ifBlank { release.optString("tag_name", "MotoNav 固件") },
+                    release.optString("body").trim().take(1800), diagnostic)
+                if (newest == null || compareVersions(candidate.version, newest.version) > 0 ||
+                    compareVersions(candidate.version, newest.version) == 0 && newest.diagnostic && !diagnostic)
+                    newest = candidate
+            }
         }
-        return newest ?: error("GitHub 暂未发布适用于 $board 的稳定 OTA 固件")
+        return newest ?: error(if (includeDiagnostic) "GitHub 暂未发布适用于 $board 的稳定或测试 OTA 固件"
+            else "GitHub 暂未发布适用于 $board 的稳定 OTA 固件")
     }
 
     /** Downloads the selected release and applies the same package checks as the offline picker. */
@@ -134,6 +149,17 @@ object FirmwareUpdateClient {
     private fun safeAssetName(value: String): String {
         require(Regex("[A-Za-z0-9._-]{1,180}").matches(value)) { "更新索引中的文件名无效" }
         return value
+    }
+
+    /** Shared policy for an index's name, declared channel and explicit user opt-in. */
+    fun isIndexAllowed(indexName: String, schema: Int, channel: String,
+                       includeDiagnostic: Boolean, prerelease: Boolean): Boolean {
+        if (schema != 1) return false
+        return when (indexName) {
+            INDEX_ASSET -> channel == "stable" && !prerelease
+            DIAGNOSTIC_INDEX_ASSET -> includeDiagnostic && channel == "diagnostic"
+            else -> false
+        }
     }
 
     /** Exposed for the release-policy regression test; this is not an OTA bypass. */

@@ -42,6 +42,8 @@ void handleText(const String &m) {
   if (m == "#IMU,1") { setImuDiagnosticsStream(true); return; }
   if (m == "#IMU,0") { setImuDiagnosticsStream(false); return; }
   if (m == "#IMU?") { requestImuDiagnosticsStatus(); return; }
+  if (m == "#IMUCAL?") { requestImuMountReferenceStatus(); return; }
+  if (m == "#IMUCAL,START") { startImuMountReference(); return; }
   if(m.startsWith("#TLA,")) {
     const int previous=trafficLightFrame.key;
     const bool accepted=trafficLightFrame.receive(m.c_str(),millis());

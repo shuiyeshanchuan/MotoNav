@@ -32,6 +32,13 @@ if($LASTEXITCODE -ne 0){throw 'Accident record coordinator tests failed'}
 & $taskJava -cp $taskClasses com.example.motonav.ImuStaticBaselineTest
 if($LASTEXITCODE -ne 0){throw 'IMU static baseline tests failed'}
 
+& $taskJavac -encoding UTF-8 -d $taskClasses `
+    (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/ImuMountCalibration.java') `
+    (Join-Path $PSScriptRoot 'ImuMountCalibrationTest.java')
+if($LASTEXITCODE -ne 0){throw 'IMU installation reference compile failed'}
+& $taskJava -cp $taskClasses com.example.motonav.ImuMountCalibrationTest
+if($LASTEXITCODE -ne 0){throw 'IMU installation reference tests failed'}
+
 & $taskJavac -encoding UTF-8 -d $taskClasses (Join-Path $taskRoot 'app/src/main/java/com/example/motonav/MapStylePolicy.java') (Join-Path $PSScriptRoot 'MapStylePolicyTest.java')
 if($LASTEXITCODE -ne 0){throw 'Style test compile failed'}
 & $taskJava -cp $taskClasses com.example.motonav.MapStylePolicyTest
