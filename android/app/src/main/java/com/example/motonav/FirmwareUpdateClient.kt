@@ -79,9 +79,7 @@ object FirmwareUpdateClient {
                 val candidate = Candidate(board, version, manifestUrl, imageUrl,
                     release.optString("name").ifBlank { release.optString("tag_name", "MotoNav 固件") },
                     release.optString("body").trim().take(1800), diagnostic)
-                if (newest == null || compareVersions(candidate.version, newest.version) > 0 ||
-                    compareVersions(candidate.version, newest.version) == 0 && newest.diagnostic && !diagnostic)
-                    newest = candidate
+                newest = selectNewer(newest, candidate)
             }
         }
         return newest ?: error(if (includeDiagnostic) "GitHub 暂未发布适用于 $board 的稳定或测试 OTA 固件"
@@ -110,6 +108,14 @@ object FirmwareUpdateClient {
      */
     fun isNotOlder(candidate: String, current: String): Boolean {
         return current.isBlank() || compareVersions(candidate, current) >= 0
+    }
+
+    /** Incomparable build channels retain release order; only exact versions prefer stable. */
+    fun selectNewer(current: Candidate?, candidate: Candidate): Candidate {
+        if (current == null || compareVersions(candidate.version, current.version) > 0 ||
+            candidate.version == current.version && current.diagnostic && !candidate.diagnostic)
+            return candidate
+        return current
     }
 
     private fun compareVersions(left: String, right: String): Int {

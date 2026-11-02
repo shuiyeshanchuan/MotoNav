@@ -178,8 +178,9 @@ import java.util.Locale
  *   v8.3.62  微信接听增加独立的一次点击诊断、截图标定与手势回调记录。
  *   v8.3.63  删除微信接听与模拟点击验证，微信仅保留来电和消息显示。
  *   v8.3.64  行驶信息增加安装姿态校准，两端共用圆屏保存的静态相对倾斜基准。
+ *   v8.3.65  修复测试 OTA 候选被旧系列稳定固件覆盖，增加发布可见性核验。
  */
-const val APP_VERSION = "v8.3.64"
+const val APP_VERSION = "v8.3.65"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
