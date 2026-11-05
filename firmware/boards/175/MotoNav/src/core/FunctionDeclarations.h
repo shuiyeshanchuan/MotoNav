@@ -227,6 +227,13 @@ void setImuDiagnosticsStream(bool enabled);
 void requestImuDiagnosticsStatus();
 void requestImuMountReferenceStatus();
 void startImuMountReference();
+void initContinuousImuRecord();
+bool handleContinuousImuRecordControl(const uint8_t *data, int size);
+void continuousImuRecordSample(uint32_t now, float ax, float ay, float az,
+                               float gx, float gy, float gz, float temperature);
+void continuousImuRecordReadError();
+void continuousImuRecordDisconnected();
+void continuousImuRecordNotifyTick();
 void setup();
 void idlePowerOffShutdown();
 void drawTrafficLightLab(uint32_t now);

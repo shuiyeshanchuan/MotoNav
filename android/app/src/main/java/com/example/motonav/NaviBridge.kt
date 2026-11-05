@@ -201,6 +201,7 @@ object NaviBridge {
     /** v3.0 准备一次新的导航：拿到高德导航对象，挂上我们的“旁听”回调，清空上次的状态 */
     fun attach(context: Context): AMapNavi? {
         WebMotorGuide.stop()
+        ContinuousImuRecorder.navigationStopped()
         val c = context.applicationContext
         endCruiseQuietly()                                                       // v4.7 开始导航前先结束巡航
         resetState()

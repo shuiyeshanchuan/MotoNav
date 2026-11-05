@@ -51,13 +51,21 @@ object RideRecorder {
         enabled = context.getSharedPreferences("motonav",0).getBoolean("record_rides_v1",true)
         work { check(directory.isDirectory || directory.mkdirs()); recover() }
     }
-    fun start(mode: String, title: String, simulation: Boolean = false) = work {
-        finishSession()
-        request = if (simulation) null else mode to title.take(120)
-        requestedLabel = request?.first
-        gate = RideTrackMath.Gate(); failed = false; error = null
+    fun start(mode: String, title: String, simulation: Boolean = false) {
+        // IMU recording starts with navigation, even before a GPS fix or when
+        // GPS track recording is disabled. Cruise remains a separate mode.
+        ContinuousImuRecorder.navigationStarted(mode, title, simulation)
+        work {
+            finishSession()
+            request = if (simulation) null else mode to title.take(120)
+            requestedLabel = request?.first
+            gate = RideTrackMath.Gate(); failed = false; error = null
+        }
     }
-    fun stop() = work { request = null; requestedLabel = null; finishSession() }
+    fun stop() {
+        ContinuousImuRecorder.navigationStopped()
+        work { request = null; requestedLabel = null; finishSession() }
+    }
     fun setEnabled(value: Boolean) {
         enabled = value
         work {

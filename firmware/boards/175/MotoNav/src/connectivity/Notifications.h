@@ -10,6 +10,7 @@ void sendPendingAck() {
     txChar->notify();
     txChar->setValue((uint8_t *)"CAP,HID,1", 9); txChar->notify();
     txChar->setValue((uint8_t *)"CAP,LYR,1", 9); txChar->notify();
+    pendingContinuousImuCapability = true;
     pendingHidStatus = String("HID,") + (hidMusicMode ? 1 : 0) + "," + (hidMediaReady() ? 1 : 0);
     appleMedia.resend();
     pendingLyricsStatus = String("ML,") + (musicLyrics ? 1 : 0);
@@ -29,6 +30,14 @@ void sendPendingAck() {
   }
   if (pendingBuildingCapability) {
     txChar->setValue((uint8_t *)"CAP,BLD,1", 9); txChar->notify(); pendingBuildingCapability=false;
+  }
+  if (pendingContinuousImuCapability) {
+#if MOTONAV_IMU_DIAGNOSTICS
+    txChar->setValue((uint8_t *)"CAP,IMUR,1", 10);
+#else
+    txChar->setValue((uint8_t *)"CAP,IMUR,0", 10);
+#endif
+    txChar->notify(); pendingContinuousImuCapability = false;
   }
   if (pendingOtaCapabilities.length()) {
     txChar->setValue((uint8_t *)pendingOtaCapabilities.c_str(), pendingOtaCapabilities.length());

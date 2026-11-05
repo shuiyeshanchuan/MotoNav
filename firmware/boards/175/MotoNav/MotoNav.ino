@@ -43,6 +43,7 @@
 #include "src/diagnostics/RenderBenchmarks.h"
 #include "src/diagnostics/DeviceDiagnostics.h"
 #include "src/diagnostics/ImuDiagnostics.h"
+#include "src/diagnostics/ContinuousImuRecord.h"
 #include "src/pages/RideInfoPage.h"
 
 // 初始化：硬件、画布、持久化设置及蓝牙服务。
@@ -93,6 +94,7 @@ void setup() {
   initRotSpan();                                                    // v6.4 任意角度用
   initDoubleBuffer();                                               // v2.2 双缓冲 + 核心 0 刷屏
   helperInit();                                                     // v5.7 另一个核心帮忙画底图
+  initContinuousImuRecord();                                       // bounded record-only PSRAM allocation
 
   if (bootBrand != BootAnimation::Off && gfx->getFramebuffer()) {
     uint32_t bootAt = millis();
@@ -444,5 +446,6 @@ void loop() {
         idlePowerOffShutdown();
     }
   }
+  continuousImuRecordNotifyTick();                    // lowest-priority: at most one IMU fragment per loop
   delay(mapNow ? 1 : 10);
 }

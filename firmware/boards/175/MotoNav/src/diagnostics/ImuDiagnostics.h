@@ -32,8 +32,8 @@ struct ImuPageTelemetry {
 
 // The diagnostic image keeps a small, fixed-size summary ring.  It is not an
 // accident detector and it is never used to change navigation state.  Keeping
-// only quantised magnitudes makes the memory cost bounded and avoids retaining
-// a raw motion recording in the firmware process.
+// only quantised magnitudes makes this legacy diagnostic's memory cost bounded.
+// The independent navigation recorder has its own opt-in, finite PSRAM buffer.
 static constexpr uint8_t IMU_DIAG_RING_SIZE = 64;
 // The diagnostic reader runs from the shared main loop.  On the real 1.75C,
 // normal loop/I2C scheduling jitter has been measured at 46-47 ms even while
@@ -425,6 +425,7 @@ inline void imuDiagnosticsTick() {
       !isfinite(gyro.dps.x) || !isfinite(gyro.dps.y) ||
       !isfinite(gyro.dps.z) || !isfinite(accel.temperature)) {
     ++imuDiagnostics.readErrors;
+    continuousImuRecordReadError();
     imuMountReferenceTick(now);
     return;
   }
@@ -440,6 +441,8 @@ inline void imuDiagnosticsTick() {
   recordImuDiagnosticSample(now, accel, gyro);
   ++imuDiagnostics.samples;
   recordImuMountSample(now, accel, gyro);
+  continuousImuRecordSample(now, accel.mps2.x, accel.mps2.y, accel.mps2.z,
+      gyro.dps.x, gyro.dps.y, gyro.dps.z, accel.temperature);
 
   // CSV is intentionally serial-only.  Do not add it to the BLE protocol or
   // the normal device status packets before a sampling format is reviewed.

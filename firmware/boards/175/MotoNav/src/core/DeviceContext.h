@@ -46,6 +46,7 @@ public:
 SwapCanvas *gfx = new SwapCanvas(LCD_WIDTH, LCD_HEIGHT, panel);
 bool needFlush = false;
 bool frameIsMap = false;          // v2.2 这一帧是小地图（整帧重画，可以异步刷屏）
+bool pendingContinuousImuCapability = false;
 int qspiMHz = 40;                 // v2.3 屏幕数据线速度
 bool fastFlushOn = true;          // v2.6 快速刷屏
 

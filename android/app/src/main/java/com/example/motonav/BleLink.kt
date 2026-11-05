@@ -105,6 +105,7 @@ object BleLink {
         gatt = null
         old?.let { session.clear(it) }
         ready = false; verified = false; buildingsSupported = false
+        supportsContinuousImu = false
         handler.removeCallbacks(mtuRetry)
         mtuRetryCount = 0
         capabilityQuerySent = false; rxChar = null; otaRxChar = null; otaTxChar = null; mtu = 23
@@ -182,6 +183,8 @@ object BleLink {
     private var burstStart = 0L
     private var burstBytes = 0L
     @Volatile var buildingsSupported = false
+    @Volatile var supportsContinuousImu = false
+        private set
     @Volatile var screenStats = ""                    // v2.0.1 圆屏发来的帧率统计
     @Volatile var screenInfo = ""                     // 设备身份、版本和分区信息
     @Volatile var screenSelfTest = ""                 // 最近一次启动自检结果
@@ -515,6 +518,9 @@ object BleLink {
     }
 
     private fun onNotify(bytes: ByteArray?, receivedAtMonotonicMs: Long) {
+        // Recording has its own bounded binary parser and writer, independent
+        // of the opt-in display/baseline IMU listener.
+        if (bytes != null && ContinuousImuRecorder.onNotification(bytes, receivedAtMonotonicMs)) return
         val msg = bytes?.toString(Charsets.UTF_8)?.trim() ?: return
         if (BleSession.confirms(msg, capabilityQuerySent)) markVerified()
         if (msg.startsWith("IMUCAL,")) {
@@ -600,6 +606,7 @@ object BleLink {
             trace("device $msg"); return
         }
         if(msg.startsWith("BLE,")) { screenBleStats = msg; trace("device $msg"); return }
+        if (msg.startsWith("CAP,IMUR,")) { supportsContinuousImu = msg == "CAP,IMUR,1"; return }
         if(msg=="CAP,HID,1") { handler.post { sendEvent("#HM,0") }; return }
         if(msg=="CAP,BLD,1") {
             handler.post { if(!buildingsSupported) { buildingsSupported=true;MapFeeder.onBuildingCapability() } }
@@ -1048,6 +1055,17 @@ object BleLink {
     fun setImuDiagnosticsStream(enabled: Boolean) {
         if (!ready || !verified) return
         send(if (enabled) "#IMU,1" else "#IMU,0")
+    }
+
+    /** Ephemeral recording controls: never saved in the navigation replay cache. */
+    fun sendImuRecordControl(packet: ByteArray) {
+        handler.post {
+            if (!ready || !verified || otaInProgress || packet.size > maxWrite()) return@post
+            val opcode = packet.getOrNull(3)?.toInt() ?: return@post
+            val key = when (opcode) { 3 -> "IMUREC_ACK"; 4 -> "IMUREC_QUERY"; else -> "IMUREC_CONTROL" }
+            synchronized(lock) { enqueue(key, packet) }
+            pump()
+        }
     }
 
     /** Request diagnostic sensor status without enabling sample notifications. */

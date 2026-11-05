@@ -85,6 +85,7 @@ class NavService : Service() {
     override fun onDestroy() {
         WebMotorGuide.stop()
         RideRecorder.stop()
+        ContinuousImuRecorder.serviceStopped()
         AmapCaptureHost.serviceStopped(this)
         running = false
         CallWatcher.stop()                // v5.0

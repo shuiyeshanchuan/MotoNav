@@ -180,7 +180,7 @@ import java.util.Locale
  *   v8.3.64  行驶信息增加安装姿态校准，两端共用圆屏保存的静态相对倾斜基准。
  *   v8.3.65  修复测试 OTA 候选被旧系列稳定固件覆盖，增加发布可见性核验。
  */
-const val APP_VERSION = "v8.3.65"
+const val APP_VERSION = "v8.3.66"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -394,6 +394,26 @@ class MainActivity : AppCompatActivity() {
         box.addView(telemetry)
         val state = label("", 12f, SUB).apply { setPadding(0, dp(10), 0, 0) }
         box.addView(state)
+        val recordingState = label("", 13f, TEXT).apply { setPadding(0, dp(10), 0, 0) }
+        box.addView(recordingState)
+        box.addView(note("开始导航后自动记录六轴数据，结束后保存。息屏可继续记录；断线缓存有限。巡航不启动记录，模拟导航单独标记。"))
+        val exportRecording = pillButton("导出最近连续记录", STROKE) {
+            toast("正在整理连续记录")
+            ContinuousImuRecorder.exportLatest { file, error ->
+                if (file == null) toast(error ?: "导出失败") else {
+                    val uri = FileProvider.getUriForFile(this, "$packageName.updates", file)
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        clipData = android.content.ClipData.newRawUri("IMU", uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    runCatching { startActivity(Intent.createChooser(send, "导出连续传感器记录")) }
+                        .onFailure { toast("无法打开分享：${it.message}") }
+                }
+            }
+        }
+        box.addView(exportRecording, lpMatch(top = 4, bottom = 8))
         val calibrationState = label("", 13f, SUB).apply { setPadding(0, dp(10), 0, 0) }
         box.addView(calibrationState)
         box.addView(note("安装固定后，在平地扶正车辆、熄火并保持静止，再点击校准，约需 5 秒。不要按侧撑倾斜姿态归零；调整支架或安装方向后需重新校准。"))
@@ -445,6 +465,9 @@ class MainActivity : AppCompatActivity() {
                 " · 间隔 ${it.intervalMinMs}–${it.intervalMaxMs} ms · 读错 ${it.readErrors}"
             }.orEmpty()
             state.text = "$link · $imu$health"
+            recordingState.text = ContinuousImuRecorder.message
+            exportRecording.isEnabled = ContinuousImuRecorder.latestDirectory != null
+            exportRecording.alpha = if (exportRecording.isEnabled) 1f else 0.5f
             calibrationState.text = BleLink.imuMountReferenceStatusText()
             calibrate.isEnabled = BleLink.isConnected && BleLink.verified && !BleLink.otaInProgress &&
                 BleLink.screenImuMountReference?.let { it.state != 0 } == true && !BleLink.imuMountReferenceBusy()
