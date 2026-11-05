@@ -45,6 +45,7 @@
 #include "src/diagnostics/ImuDiagnostics.h"
 #include "src/diagnostics/ContinuousImuRecord.h"
 #include "src/pages/RideInfoPage.h"
+#include "src/pages/EmergencyAlarmPage.h"
 
 // 初始化：硬件、画布、持久化设置及蓝牙服务。
 void setup() {
@@ -420,6 +421,7 @@ void loop() {
   }
 
   // Packets and connection events may have drawn behind the modal this loop.
+  emergencyAlarmRenderTick();                         // alarm overlays pages/calls; PWR/pairing/OTA retain priority
   if (powerMenuOn && needFlush) drawPowerMenu();
 
   // 6. 有变化才把画布推到屏幕（小地图帧异步推送，其他画面同步推送）
@@ -433,7 +435,7 @@ void loop() {
   const bool navigating = idlePowerOffNavigationActive(
       bleConnected && bleAuthed, inNav, cruiseOn, navDir == "A");
   const bool interacting = pairOn || pairReq || callOn || powerMenuOn || powerButtonDown ||
-      touchDown || dragging || sliding || otaActive;
+      touchDown || dragging || sliding || otaActive || emergencyAlarmVisible();
   if (idlePowerOffDueOnBattery(&idlePowerOffTimer, millis(), navigating, interacting, &idlePowerSupply)) {
     bool queued;
     portENTER_CRITICAL(&mux);
@@ -446,6 +448,7 @@ void loop() {
         idlePowerOffShutdown();
     }
   }
+  emergencyAlarmNotifyTick();                        // cancellation is retried until the phone confirms its token
   continuousImuRecordNotifyTick();                    // lowest-priority: at most one IMU fragment per loop
   delay(mapNow ? 1 : 10);
 }

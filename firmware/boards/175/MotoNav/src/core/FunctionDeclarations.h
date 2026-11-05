@@ -234,6 +234,13 @@ void continuousImuRecordSample(uint32_t now, float ax, float ay, float az,
 void continuousImuRecordReadError();
 void continuousImuRecordDisconnected();
 void continuousImuRecordNotifyTick();
+bool handleEmergencyAlarmCommand(const uint8_t *data, int size);
+bool emergencyAlarmVisible();
+void emergencyAlarmSuspendTouch();
+void emergencyAlarmTouch(uint8_t points, int16_t x, int16_t y, uint32_t now);
+void emergencyAlarmBitmapChanged();
+void emergencyAlarmRenderTick();
+void emergencyAlarmNotifyTick();
 void setup();
 void idlePowerOffShutdown();
 void drawTrafficLightLab(uint32_t now);

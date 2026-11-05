@@ -106,6 +106,8 @@ object BleLink {
         old?.let { session.clear(it) }
         ready = false; verified = false; buildingsSupported = false
         supportsContinuousImu = false
+        supportsEmergencyAlarm = false
+        EmergencyAlertController.onLinkDisconnected()
         handler.removeCallbacks(mtuRetry)
         mtuRetryCount = 0
         capabilityQuerySent = false; rxChar = null; otaRxChar = null; otaTxChar = null; mtu = 23
@@ -185,6 +187,8 @@ object BleLink {
     @Volatile var buildingsSupported = false
     @Volatile var supportsContinuousImu = false
         private set
+    @Volatile var supportsEmergencyAlarm = false
+        private set
     @Volatile var screenStats = ""                    // v2.0.1 圆屏发来的帧率统计
     @Volatile var screenInfo = ""                     // 设备身份、版本和分区信息
     @Volatile var screenSelfTest = ""                 // 最近一次启动自检结果
@@ -242,7 +246,7 @@ object BleLink {
     private val lastState = LinkedHashMap<String, String>()
     private class Img(val w: Int, val h: Int, val data: ByteArray)
     private val lastImg = HashMap<Int, Img?>()
-    private val imgId = IntArray(14)               // 与固件 IMG_SLOTS 一致：12 = 歌词，13 = 微信通知岛
+    private val imgId = IntArray(16)               // 14/15 = emergency test prompt; older slots unchanged
 
     // ---- 给界面看的统计 ----
     @Volatile var sentCount = 0
@@ -607,6 +611,11 @@ object BleLink {
         }
         if(msg.startsWith("BLE,")) { screenBleStats = msg; trace("device $msg"); return }
         if (msg.startsWith("CAP,IMUR,")) { supportsContinuousImu = msg == "CAP,IMUR,1"; return }
+        if (msg.startsWith("CAP,EMG,")) { supportsEmergencyAlarm = msg == "CAP,EMG,1"; return }
+        if (msg.startsWith("EA,C,")) {
+            msg.substringAfter("EA,C,").toLongOrNull(16)?.let { EmergencyAlertController.onBoardCancel(it) }
+            return
+        }
         if(msg=="CAP,HID,1") { handler.post { sendEvent("#HM,0") }; return }
         if(msg=="CAP,BLD,1") {
             handler.post { if(!buildingsSupported) { buildingsSupported=true;MapFeeder.onBuildingCapability() } }

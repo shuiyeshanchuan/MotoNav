@@ -119,8 +119,8 @@ void handleText(const String &m) {
     return;
   }
   if (m == "#AMS?") { appleMedia.resend(); return; }
-  if (m == "#GB?") { pendingBuildingCapability=true; pendingContinuousImuCapability=true; return; }
-  if (m == "#INFO?") { queueDeviceInfo(); queueDeviceSelfTest(); pendingContinuousImuCapability=true; return; }
+  if (m == "#GB?") { pendingBuildingCapability=true; pendingContinuousImuCapability=true; pendingEmergencyAlarmCapability=true; return; }
+  if (m == "#INFO?") { queueDeviceInfo(); queueDeviceSelfTest(); pendingContinuousImuCapability=true; pendingEmergencyAlarmCapability=true; return; }
   if (m == "#OTA?") { queueOtaStatus(); return; }
   if (m == "#BLE?") { queueBleStatus(); return; }
   if (m.startsWith("#ZACK,")) {
@@ -491,6 +491,8 @@ void handleMessage(const uint8_t *d, int n) {
   // Record controls/ACKs have their own lifecycle. They must not make stale
   // navigation look current or feed arbitrary binary bytes to handleText().
   if (handleContinuousImuRecordControl(d, n)) return;
+  if (handleEmergencyAlarmCommand(d, n)) return;
+  if (n >= 2 && d[0] == 'B' && (d[1] == 14 || d[1] == 15)) { handleBitmap(d, n); return; }
   lastRxMs = millis();
   if (staleShown) { staleShown = false; navDirty = true; }   // 收到任何消息，清掉数据中断提示
   if (d[0] == 'B') { handleBitmap(d, n); return; }

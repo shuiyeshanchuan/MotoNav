@@ -47,6 +47,7 @@ SwapCanvas *gfx = new SwapCanvas(LCD_WIDTH, LCD_HEIGHT, panel);
 bool needFlush = false;
 bool frameIsMap = false;          // v2.2 这一帧是小地图（整帧重画，可以异步刷屏）
 bool pendingContinuousImuCapability = false;
+bool pendingEmergencyAlarmCapability = false;
 int qspiMHz = 40;                 // v2.3 屏幕数据线速度
 bool fastFlushOn = true;          // v2.6 快速刷屏
 
@@ -175,7 +176,7 @@ float mapCamLockH[MCAM_MAX];  // v4.0 放图标时的地图朝向：之后固定
 uint8_t laneBg[8], laneFr[8]; // 每条车道的背景方向码、推荐方向码（0xF = 不推荐）
 
 // ===== 文字图片（手机渲染好的 4 位灰度图）=====
-#define IMG_SLOTS 14           // 0/1 = 导航文字，2 = 电话姓名，3/4 = 天气，5/6 = 音乐，12 = 歌词，13 = 通知岛文字
+#define IMG_SLOTS 16           // 0/1导航，2电话，3/4天气，5/6音乐，12歌词，13通知，14/15报警提示
 #define IMG_MAX   8192        // 每张图最多字节数
 struct TextImg {
   uint8_t *show;              // 正在显示的图

@@ -127,7 +127,7 @@ void touchPoll() {
   static unsigned long lastPoll = 0;
   unsigned long now = millis();
   if (!touchOK) return;
-  if (!touchIrq && !touchDown && !callOn && noticeKind != 2 && !powerMenuOn) return;
+  if (!touchIrq && !touchDown && !callOn && noticeKind != 2 && !powerMenuOn && !emergencyAlarmVisible()) return;
   if (now - lastPoll < 12) return;
   lastPoll = now;
   touchIrq = false;
@@ -142,6 +142,7 @@ void touchPoll() {
     touchHoldAt = 0;
   }
   if (powerMenuOn) {
+    emergencyAlarmSuspendTouch();
     // A touch that began on the previous page must end before it can select a menu action.
     if (powerButtonDown || powerMenuNeedsTouchRelease) {
       if (n == 0) { touchDown = false; powerMenuNeedsTouchRelease = false; }
@@ -180,6 +181,19 @@ void touchPoll() {
       if (!powerMenuOn) touchEat = false;
     }
     return;
+  }
+  if (emergencyAlarmVisible()) {
+    if (pairOn || pairReq || otaActive) emergencyAlarmSuspendTouch();
+    else {
+      // The full-screen hold has no fixed coordinates, so the cancellation
+      // affordance remains valid at every configured round-screen rotation.
+      dragAbort();
+      touchDown = n > 0;
+      if (n) touchLastSeen = now;
+      touchHold = 0;
+      emergencyAlarmTouch(n, x[0], y[0], now);
+      return;
+    }
   }
   if (n > 0) {
     if (touchDown && touchHoldAt == 0 && (callOn || noticeKind == 2)) {

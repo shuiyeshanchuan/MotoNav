@@ -7,6 +7,8 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.text.TextPaint
 import android.text.TextUtils
+import android.text.StaticLayout
+import android.text.Layout
 import kotlin.math.ceil
 
 /**
@@ -75,6 +77,32 @@ object TextImage {
             drawText(second, 0f, firstHeight + 2 - detail.fontMetrics.ascent, detail)
         }
         return pack(bmp)
+    }
+
+    /** Two bounded 4bpp slots; maximum 7680 bytes each, no firmware font dependency. */
+    fun renderEmergency(text: String): List<Img> {
+        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE; typeface = Typeface.DEFAULT; textSize = 18f
+        }
+        fun layout() = StaticLayout.Builder.obtain(text, 0, text.length, paint, 256)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER).setIncludePad(false)
+            .setMaxLines(6).setEllipsize(TextUtils.TruncateAt.END).setEllipsizedWidth(256).build()
+        var content = layout()
+        while ((content.height > 120 || content.getEllipsisCount(content.lineCount - 1) > 0) && paint.textSize > 14f) {
+            paint.textSize -= 1f; content = layout()
+        }
+        val height = content.height.coerceIn(1, 120)
+        val bitmap = Bitmap.createBitmap(256, height, Bitmap.Config.ARGB_8888)
+        content.draw(Canvas(bitmap))
+        val result = ArrayList<Img>(2)
+        for (top in 0 until height step 60) {
+            val slice = Bitmap.createBitmap(bitmap, 0, top, 256, minOf(60, height - top))
+            // createBitmap can return its input when the crop covers everything.
+            if (slice === bitmap) { result.add(pack(bitmap)); return result }
+            result.add(pack(slice))
+        }
+        bitmap.recycle()
+        return result
     }
 
     private fun pack(bmp: Bitmap): Img {

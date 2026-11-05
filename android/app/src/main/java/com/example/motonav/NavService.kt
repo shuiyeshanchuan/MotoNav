@@ -86,6 +86,7 @@ class NavService : Service() {
         WebMotorGuide.stop()
         RideRecorder.stop()
         ContinuousImuRecorder.serviceStopped()
+        EmergencyAlertController.serviceStopped()
         AmapCaptureHost.serviceStopped(this)
         running = false
         CallWatcher.stop()                // v5.0

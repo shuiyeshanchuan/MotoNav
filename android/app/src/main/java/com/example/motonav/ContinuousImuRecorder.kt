@@ -14,6 +14,8 @@ import java.util.zip.ZipOutputStream
 
 /** Navigation-scoped raw recording. No incident decisions or contact actions. */
 object ContinuousImuRecorder {
+    /** Fast read-only observation before the disk queue; no storage ACK semantics change. */
+    @Volatile var liveBatchObserver: ((ContinuousImuProtocol.Batch, Long) -> Unit)? = null
     private val main = Handler(Looper.getMainLooper())
     private val jobs = ArrayBlockingQueue<() -> Unit>(64)
     private val assembler = ContinuousImuProtocol.Assembler(3000)
@@ -131,7 +133,10 @@ object ContinuousImuRecorder {
         val batch = try { assembler.accept(bytes, receivedAt) }
         catch (_: IllegalArgumentException) { badPackets.incrementAndGet(); null }
         val wall = System.currentTimeMillis()
-        if (batch != null) offer { receive(batch, receivedAt, wall) }
+        if (batch != null) {
+            liveBatchObserver?.invoke(batch, receivedAt)
+            offer { receive(batch, receivedAt, wall) }
+        }
         return true
     }
 

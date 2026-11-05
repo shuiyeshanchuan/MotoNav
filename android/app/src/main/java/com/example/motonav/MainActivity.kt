@@ -180,7 +180,7 @@ import java.util.Locale
  *   v8.3.64  行驶信息增加安装姿态校准，两端共用圆屏保存的静态相对倾斜基准。
  *   v8.3.65  修复测试 OTA 候选被旧系列稳定固件覆盖，增加发布可见性核验。
  */
-const val APP_VERSION = "v8.3.66"
+const val APP_VERSION = "v8.3.67"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -331,6 +331,9 @@ class MainActivity : AppCompatActivity() {
                 content.addView(drivingInfoCard())
             }
             3 -> {
+                content.addView(pillButton("急刹报警测试与紧急联系人", STROKE) {
+                    startActivity(Intent(this, EmergencySettingsActivity::class.java))
+                })
                 content.addView(section("map", "地图与显示", { mapSummary() }) { mapSection(it) })
                 content.addView(section("voice", "导航语音", { voiceSummary() }) { voiceSection(it) })
                 content.addView(section("keys", "地图与天气 Key", { keySummary() }) { keySection(it) })
@@ -396,6 +399,9 @@ class MainActivity : AppCompatActivity() {
         box.addView(state)
         val recordingState = label("", 13f, TEXT).apply { setPadding(0, dp(10), 0, 0) }
         box.addView(recordingState)
+        box.addView(pillButton("急刹报警测试", STROKE) {
+            startActivity(Intent(this, EmergencySettingsActivity::class.java))
+        }, lpMatch(top = 6))
         box.addView(note("开始导航后自动记录六轴数据，结束后保存。息屏可继续记录；断线缓存有限。巡航不启动记录，模拟导航单独标记。"))
         val exportRecording = pillButton("导出最近连续记录", STROKE) {
             toast("正在整理连续记录")

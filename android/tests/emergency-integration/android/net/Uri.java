@@ -1,0 +1,2 @@
+package android.net;
+public final class Uri {private final String value;private final java.net.URI parsed;private Uri(String v){value=v;parsed=java.net.URI.create(v);}public static Uri parse(String text){return new Uri(text);}public String toString(){return value;}public String getScheme(){return parsed.getScheme();}public String getHost(){return parsed.getHost();}public java.util.List<String> getPathSegments(){java.util.List<String> r=new java.util.ArrayList<>();for(String v:parsed.getPath().split("/"))if(!v.isEmpty())r.add(v);return r;} }

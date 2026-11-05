@@ -9,18 +9,24 @@ void handleBitmap(const uint8_t *d, int n) {
   int off = d[8] | (d[9] << 8);
   if (slot >= IMG_SLOTS) return;
   TextImg &im = imgs[slot];
+  const bool emergencyPrompt = slot == 14 || slot == 15;
+  if (emergencyPrompt && (!im.show || !im.recv || w > 256 || h > 160 ||
+      (parts && part >= parts))) return;
   if (w == 0 || h == 0 || parts == 0) {          // 空图：清掉这一栏
     im.showW = 0; im.showH = 0; im.recvId = -1;
     navDirty = true;
     if (slot == 3 || slot == 4) wxDirty = true;
     if (slot == 5 || slot == 6 || slot == 12) musicDirty = true;
     if (slot == 13) noticeDirty = true;
+    if (emergencyPrompt) emergencyAlarmBitmapChanged();
     return;
   }
   if (slot == 12 && (!musicLyrics || !hidMusicMode || !appleMedia.available ||
       lyricImageGeneration != appleMedia.generation || lyricImageTitleRevision != appleMedia.values[0].revision || lyricImageArtistRevision != appleMedia.values[1].revision)) return;
   int total = ((w + 1) / 2) * h;
   if (total > IMG_MAX || parts > 32) return;
+  if (emergencyPrompt && (off >= total ||
+      (id == im.recvId && (w != im.recvW || h != im.recvH || parts != im.recvParts)))) return;
   if (id != im.recvId) {                          // 新的一张图：重新开始接收
     im.recvId = id; im.recvW = w; im.recvH = h; im.recvParts = parts; im.recvMask = 0;
   }
@@ -37,5 +43,6 @@ void handleBitmap(const uint8_t *d, int n) {
     if (slot == 3 || slot == 4) wxDirty = true;
     if (slot == 5 || slot == 6 || slot == 12) musicDirty = true;                // 音乐文字图片收齐后刷新
     if (slot == 13) noticeDirty = true;
+    if (emergencyPrompt) emergencyAlarmBitmapChanged();
   }
 }

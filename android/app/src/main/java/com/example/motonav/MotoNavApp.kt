@@ -12,6 +12,7 @@ class MotoNavApp : Application() {
     override fun onCreate() {
         super.onCreate()
         ContinuousImuRecorder.init(this)
+        EmergencyAlertController.init(this)
         RideRecorder.init(this)
         BootBrand.load(this)
         MusicBridge.init(this)

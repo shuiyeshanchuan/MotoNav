@@ -55,6 +55,7 @@ object RideRecorder {
         // IMU recording starts with navigation, even before a GPS fix or when
         // GPS track recording is disabled. Cruise remains a separate mode.
         ContinuousImuRecorder.navigationStarted(mode, title, simulation)
+        EmergencyAlertController.navigationStarted(mode, simulation)
         work {
             finishSession()
             request = if (simulation) null else mode to title.take(120)
@@ -64,6 +65,7 @@ object RideRecorder {
     }
     fun stop() {
         ContinuousImuRecorder.navigationStopped()
+        EmergencyAlertController.navigationStopped()
         work { request = null; requestedLabel = null; finishSession() }
     }
     fun setEnabled(value: Boolean) {
@@ -83,7 +85,9 @@ object RideRecorder {
     fun distanceText(m: Double) = if (m < 1000) "${m.toInt()} 米" else String.format(Locale.CHINA,"%.2f 公里",m/1000)
     fun durationText(ms: Long): String { val m = ms.coerceAtLeast(0)/60000; return if (m < 60) "${m} 分钟" else "${m/60} 小时 ${m%60} 分钟" }
 
-    fun onFix(lat: Double, lng: Double, stamp: Long, wall: Long, accuracy: Double, kmh: Double) = work {
+    fun onFix(lat: Double, lng: Double, stamp: Long, wall: Long, accuracy: Double, kmh: Double) {
+        EmergencyAlertController.onFix(lat, lng, stamp, wall, accuracy, kmh)
+        work {
         val req = request ?: return@work
         if (!enabled || failed) return@work
         val accepted = gate.offer(lat,lng,stamp,wall,accuracy)
@@ -104,6 +108,7 @@ object RideRecorder {
         writer!!.apply { write(line.toString()); newLine(); flush() }
         session = next; live = next
         if (time-lastMetadataAt >= 10000) { save(next); lastMetadataAt=time }
+        }
     }
 
     fun history(callback: (List<RideSummary>, String?) -> Unit) {

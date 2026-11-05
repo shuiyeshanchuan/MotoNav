@@ -202,6 +202,7 @@ object NaviBridge {
     fun attach(context: Context): AMapNavi? {
         WebMotorGuide.stop()
         ContinuousImuRecorder.navigationStopped()
+        EmergencyAlertController.navigationStopped()
         val c = context.applicationContext
         endCruiseQuietly()                                                       // v4.7 开始导航前先结束巡航
         resetState()
