@@ -69,4 +69,5 @@ if ($RequireFeed) {
     }
     Write-Host "PASS: public update feed -> $Tag APK (URL/API URL/size/SHA-256)"
 }
-Write-Host "PASS: $Tag -> $ExpectedCommit; anonymous release position $position; $($release.html_url)"
+$listMode = if ($UseGhAuthentication) { "authenticated API" } else { "anonymous API" }
+Write-Host "PASS: $Tag -> $ExpectedCommit; $listMode release position $position; $($release.html_url)"
