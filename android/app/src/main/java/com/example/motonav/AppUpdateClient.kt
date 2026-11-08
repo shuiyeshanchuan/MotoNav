@@ -4,26 +4,28 @@ import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.MessageDigest
 import org.json.JSONArray
+import org.json.JSONObject
 
 /** Downloads only signed MotoNav APKs published as GitHub Release assets. */
 object AppUpdateClient {
     private const val REPOSITORY = "shuiyeshanchuan/MotoNav"
     private const val APK_ASSET = "app-release.apk"
     private const val MAX_APK_BYTES = 150 * 1024 * 1024
-    private const val CONNECT_TIMEOUT_MS = 10_000
-    private const val READ_TIMEOUT_MS = 60_000
 
-    data class Candidate(val version: String, val apkUrl: String, val bytes: Long)
+    data class Candidate @JvmOverloads constructor(val version: String, val apkUrl: String, val bytes: Long, val apkApiUrl: String = "")
 
     fun check(): Candidate {
-        val releases = getJsonArray("https://api.github.com/repos/$REPOSITORY/releases?per_page=30")
+        val session = GitHubUpdateSource.session()
+        val feedError = try {
+            val app = session.feed().optJSONObject("app")
+            if (app != null) return parseFeedCandidate(app)
+            "更新目录没有 App 安装包"
+        } catch (e: Exception) { e.message ?: "更新目录不可用" }
+        val releases = try { session.releases() }
+        catch (e: Exception) { error("$feedError；${e.message ?: "GitHub API 不可用"}") }
         var newest: Candidate? = null
         for (i in 0 until releases.length()) {
             val release = releases.optJSONObject(i) ?: continue
@@ -36,7 +38,8 @@ object AppUpdateClient {
                 val bytes = asset.optLong("size", -1)
                 val url = asset.optString("browser_download_url")
                 if (bytes !in 1..MAX_APK_BYTES || !isReleaseAssetUrl(url)) continue
-                val candidate = Candidate(version, url, bytes)
+                val candidate = Candidate(version, url, bytes, asset.optLong("id").takeIf { it > 0 }
+                    ?.let { "https://api.github.com/repos/$REPOSITORY/releases/assets/$it" }.orEmpty())
                 if (newest == null || compareVersions(candidate.version, newest.version) > 0) newest = candidate
             }
         }
@@ -50,36 +53,13 @@ object AppUpdateClient {
         val target = File(folder, "MotoNav-${candidate.version.removePrefix("v")}.apk")
         val partial = File(folder, "${target.name}.part")
         if (partial.exists()) partial.delete()
-        val connection = URL(candidate.apkUrl).openConnection() as HttpURLConnection
         try {
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("Accept", "application/octet-stream")
-            connection.setRequestProperty("User-Agent", "MotoNav-Android")
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) error("GitHub 请求失败：HTTP ${connection.responseCode}")
-            val total = connection.contentLengthLong
-            if (total !in 1..MAX_APK_BYTES || total != candidate.bytes) error("安装包大小与发布信息不一致")
-            connection.inputStream.use { input ->
-                FileOutputStream(partial).use { output ->
-                    val buffer = ByteArray(16 * 1024)
-                    var read = 0
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        read += count
-                        if (read > MAX_APK_BYTES) error("安装包超过允许大小")
-                        output.write(buffer, 0, count)
-                        progress(read, total.toInt())
-                    }
-                    if (read.toLong() != total) error("安装包下载不完整")
-                }
-            }
+            GitHubUpdateSource.downloadFile(candidate.apkUrl, candidate.apkApiUrl, MAX_APK_BYTES,
+                candidate.bytes, partial, progress)
             if (target.exists()) target.delete()
             if (!partial.renameTo(target)) error("无法保存安装包")
             return target
         } finally {
-            connection.disconnect()
             if (partial.exists()) partial.delete()
         }
     }
@@ -129,25 +109,18 @@ object AppUpdateClient {
         return 0
     }
 
-    private fun isReleaseAssetUrl(url: String) =
-        url.startsWith("https://github.com/$REPOSITORY/releases/download/")
+    private fun isReleaseAssetUrl(url: String) = GitHubUpdateSource.isReleaseAssetUrl(url)
 
-    private fun getJsonArray(url: String): JSONArray {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.setRequestProperty("Accept", "application/vnd.github+json")
-            connection.setRequestProperty("User-Agent", "MotoNav-Android")
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) error("GitHub 请求失败：HTTP ${connection.responseCode}")
-            val bytes = connection.inputStream.use { input ->
-                val output = ByteArrayOutputStream()
-                input.copyTo(output)
-                output.toByteArray()
-            }
-            return JSONArray(String(bytes, Charsets.UTF_8))
-        } finally {
-            connection.disconnect()
-        }
+    fun parseFeedCandidate(app: JSONObject): Candidate {
+        val version = app.optString("version")
+        require(releaseVersion(version) != null) { "更新目录 App 版本无效" }
+        val url = app.optString("apkUrl")
+        val apiUrl = app.optString("apkApiUrl")
+        val bytes = app.optLong("bytes", -1)
+        require(bytes in 1..MAX_APK_BYTES && isReleaseAssetUrl(url) &&
+            url.endsWith("/$APK_ASSET") && url.substringBeforeLast('/').substringAfterLast('/') == app.optString("releaseTag") &&
+            releaseVersion(app.optString("releaseTag")) == version &&
+            (apiUrl.isBlank() || GitHubUpdateSource.isAssetApiUrl(apiUrl))) { "更新目录 App 资产无效" }
+        return Candidate(version, url, bytes, apiUrl)
     }
 }

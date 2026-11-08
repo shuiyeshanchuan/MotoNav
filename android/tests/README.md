@@ -54,3 +54,15 @@ powershell -ExecutionPolicy Bypass -File .\android\tests\run-persistence.ps1 `
 ```
 
 该检查调用实际编译出的 `FirmwareUpdateClient`，不复制版本解析逻辑。
+
+
+## 更新目录、备用来源与超时回归（v8.3.69）
+
+先完成Release构建，使用本机JDK、Kotlin 2.0.21和JVM org.json运行库：
+
+```powershell
+.\android\tests\run-update-transport.ps1 -JavaPath '<JDK目录>' -KotlinStdlib '<kotlin-stdlib-2.0.21.jar>'
+.\android\tests\run-firmware-update.ps1 -JavaHome '<JDK目录>' -KotlinStdlib '<kotlin-stdlib-2.0.21.jar>' -JsonJar '<json-20240303.jar>'
+```
+
+第一项运行实际Release的GitHubUpdateSource/AppUpdateClient，使用受控HTTPS连接替身验证504、备用来源、并发复用、响应上限、四次阻塞共用15秒时限、超时断连、请求预算和APK残片截断；不访问手机或真实网络。第二项运行实际FirmwareUpdateClient配合元数据来源替身，验证稳定/测试隔离、损坏目录回退、官方资产ID、最多3个历史索引和错误传播。另运行原固件版本排序检查。网络替身通过不能保证用户实际网络速度。

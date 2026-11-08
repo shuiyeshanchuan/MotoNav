@@ -2,9 +2,7 @@ package com.example.motonav
 
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
+import java.net.URI
 
 /**
  * Reads signed OTA candidates from MotoNav GitHub Releases.
@@ -18,23 +16,20 @@ object FirmwareUpdateClient {
     private const val REPOSITORY = "shuiyeshanchuan/MotoNav"
     private const val INDEX_ASSET = "motonav-ota-stable.json"
     private const val DIAGNOSTIC_INDEX_ASSET = "motonav-ota-diagnostic.json"
-    // The GitHub releases API includes metadata for every asset in every
-    // release. It is larger than an individual OTA manifest and grows as
-    // releases accumulate, so it needs its own bounded limit.
-    private const val MAX_RELEASES_BYTES = 2 * 1024 * 1024
+    private const val MAX_INDEX_REQUESTS = 3
     private const val MAX_MANIFEST_BYTES = 256 * 1024
     private const val MAX_IMAGE_BYTES = 5 * 1024 * 1024
-    private const val CONNECT_TIMEOUT_MS = 10_000
-    private const val READ_TIMEOUT_MS = 30_000
 
-    data class Candidate(
+    data class Candidate @JvmOverloads constructor(
         val board: String,
         val version: String,
         val manifestUrl: String,
         val imageUrl: String,
         val releaseName: String,
         val notes: String,
-        val diagnostic: Boolean = false
+        val diagnostic: Boolean = false,
+        val manifestApiUrl: String = "",
+        val imageApiUrl: String = ""
     )
 
     /** Returns the newest allowed firmware candidate across GitHub Releases.
@@ -46,23 +41,38 @@ object FirmwareUpdateClient {
      */
     fun check(board: String, includeDiagnostic: Boolean = false): Candidate {
         require(board == "175C" || board == "175") { "请先连接受支持的圆屏" }
-        val releases = getJsonArray(
-            "https://api.github.com/repos/$REPOSITORY/releases?per_page=30",
-            MAX_RELEASES_BYTES
-        )
+        val source = GitHubUpdateSource.session()
+        val feedFailure = try {
+            selectFeedCandidate(source.feed(), board, includeDiagnostic)?.let { return it }
+            "更新目录未列出 $board 的${if (includeDiagnostic) "稳定或测试" else "稳定"}固件"
+        } catch (e: Exception) { e.message ?: "更新目录读取失败" }
+        // One shared deadline and request budget cover the feed, release list and
+        // bounded index fallback; old releases cannot multiply 30s timeouts.
+        val releases = try { source.releases() }
+        catch (e: Exception) { error("固件检查失败：${e.message}；更新目录：$feedFailure") }
         val indexNames = if (includeDiagnostic) listOf(INDEX_ASSET, DIAGNOSTIC_INDEX_ASSET)
             else listOf(INDEX_ASSET)
         var newest: Candidate? = null
-        for (i in 0 until releases.length()) {
-            val release = releases.optJSONObject(i) ?: continue
+        var requested = 0
+        // API order is not tag creation order. Keep a bounded metadata-only sort
+        // so incomparable nav/power labels still retain newest publication order.
+        val ordered = (0 until releases.length()).mapNotNull { releases.optJSONObject(it) }
+            .sortedByDescending { it.optString("published_at").ifBlank { it.optString("created_at") } }
+        for (release in ordered) {
             if (release.optBoolean("draft")) continue
             val assets = release.optJSONArray("assets") ?: continue
             for (indexName in indexNames) {
                 // A prerelease can publish a diagnostic index, never a stable candidate.
                 if (release.optBoolean("prerelease") && indexName == INDEX_ASSET) continue
                 val indexUrl = assetUrl(assets, indexName) ?: continue
-                val index = try { JSONObject(String(download(indexUrl, MAX_MANIFEST_BYTES), Charsets.UTF_8)) }
-                catch (_: Exception) { continue }
+                if (requested >= MAX_INDEX_REQUESTS) break
+                if (source.remainingRequests() <= 0 || source.remainingMs() <= 0) {
+                    if (newest != null) return newest
+                    error("固件检查时间或请求预算已用尽；更新目录：$feedFailure")
+                }
+                requested++
+                val index = try { source.jsonObject(assetApiUrl(assets, indexName).ifBlank { indexUrl }, MAX_MANIFEST_BYTES) }
+                catch (e: Exception) { error("固件索引 $indexName 读取失败：${e.message}；更新目录：$feedFailure") }
                 if (!isIndexAllowed(indexName, index.optInt("schema"), index.optString("channel"),
                         includeDiagnostic, release.optBoolean("prerelease"))) continue
                 val diagnostic = indexName == DIAGNOSTIC_INDEX_ASSET
@@ -78,20 +88,66 @@ object FirmwareUpdateClient {
                 val imageUrl = assetUrl(assets, imageName) ?: continue
                 val candidate = Candidate(board, version, manifestUrl, imageUrl,
                     release.optString("name").ifBlank { release.optString("tag_name", "MotoNav 固件") },
-                    release.optString("body").trim().take(1800), diagnostic)
+                    release.optString("body").trim().take(1800), diagnostic,
+                    assetApiUrl(assets, manifestName), assetApiUrl(assets, imageName))
                 newest = selectNewer(newest, candidate)
             }
         }
-        return newest ?: error(if (includeDiagnostic) "GitHub 暂未发布适用于 $board 的稳定或测试 OTA 固件"
-            else "GitHub 暂未发布适用于 $board 的稳定 OTA 固件")
+        return newest ?: error("固件检查未找到适用于 $board 的${if (includeDiagnostic) "稳定或测试" else "稳定"}候选；" +
+            "更新目录：$feedFailure；已读取 $requested 个发布索引（最多 $MAX_INDEX_REQUESTS 个）")
     }
+
+    /** The official small feed is ordered newest-publication-first, just like the fallback. */
+    fun selectFeedCandidate(feed: JSONObject, board: String, includeDiagnostic: Boolean): Candidate? {
+        require(feed.optInt("schema") == 1) { "更新目录版本不受支持" }
+        val items = feed.optJSONArray("firmwares") ?: error("更新目录缺少固件列表")
+        var newest: Candidate? = null
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            if (item.optString("board") != board) continue
+            val channel = item.optString("channel")
+            val diagnostic = channel == "diagnostic"
+            if (channel != "stable" && !diagnostic || diagnostic && !includeDiagnostic ||
+                !diagnostic && item.optBoolean("prerelease")) continue
+            val version = safeVersion(item.optString("version"))
+            val manifestUrl = item.optString("manifestUrl")
+            val imageUrl = item.optString("imageUrl")
+            val manifest = releaseAsset(manifestUrl) ?: error("更新目录中的 $board 固件清单地址无效")
+            val image = releaseAsset(imageUrl) ?: error("更新目录中的 $board 固件镜像地址无效")
+            val manifestApi = item.optString("manifestApiUrl")
+            val imageApi = item.optString("imageApiUrl")
+            require(isApiAssetUrl(manifestApi) && isApiAssetUrl(imageApi)) { "更新目录中的 $board API 附件地址无效" }
+            if (manifest.first != image.first || !manifest.second.endsWith("_manifest.json") ||
+                !image.second.endsWith("_app_0x10000.bin")) error("更新目录中的 $board 固件文件不属于同一发布或类型错误")
+            if (!diagnostic && isDiagnosticAsset(version, manifest.second, image.second)) error("稳定更新目录混入测试固件")
+            newest = selectNewer(newest, Candidate(board, version, manifestUrl, imageUrl,
+                item.optString("releaseName").ifBlank { "MotoNav 固件" }, item.optString("notes").trim().take(1800), diagnostic,
+                manifestApi, imageApi))
+        }
+        return newest
+    }
+
+    /** Do not let a feed redirect either half of a signed package to a different repo/release. */
+    private fun releaseAsset(value: String): Pair<String, String>? = runCatching {
+        val uri = URI(value)
+        if (uri.scheme != "https" || uri.host != "github.com" || uri.port != -1 || uri.userInfo != null ||
+            uri.rawQuery != null || uri.rawFragment != null) return null
+        val prefix = "/$REPOSITORY/releases/download/"
+        if (!uri.rawPath.startsWith(prefix)) return null
+        val tail = uri.rawPath.removePrefix(prefix).split('/')
+        if (tail.size != 2 || tail[0] == "." || tail[0] == ".." || !Regex("[A-Za-z0-9._-]{1,120}").matches(tail[0])) return null
+        tail[0] to safeAssetName(tail[1])
+    }.getOrNull()
+
+    private fun isApiAssetUrl(value: String): Boolean = value.isBlank() ||
+        Regex("https://api\\.github\\.com/repos/$REPOSITORY/releases/assets/[1-9][0-9]*").matches(value)
 
     /** Downloads the selected release and applies the same package checks as the offline picker. */
     fun downloadPackage(candidate: Candidate, progress: (String) -> Unit): OtaPackage {
         progress("正在下载固件清单…")
-        val manifest = download(candidate.manifestUrl, MAX_MANIFEST_BYTES)
+        val manifest = GitHubUpdateSource.downloadAsset(candidate.manifestUrl, candidate.manifestApiUrl, MAX_MANIFEST_BYTES)
         progress("正在下载圆屏固件…")
-        val image = download(candidate.imageUrl, MAX_IMAGE_BYTES) { read, total ->
+        val image = GitHubUpdateSource.downloadAsset(candidate.imageUrl, candidate.imageApiUrl, MAX_IMAGE_BYTES) { read, total ->
             progress(if (total > 0) "正在下载圆屏固件：$read / $total 字节" else "正在下载圆屏固件：$read 字节")
         }
         val pkg = OtaPackage.read(manifest, image)
@@ -187,37 +243,13 @@ object FirmwareUpdateClient {
         return null
     }
 
-    private fun getJsonArray(url: String, maxBytes: Int): JSONArray =
-        JSONArray(String(download(url, maxBytes), Charsets.UTF_8))
-
-    private fun download(url: String, maxBytes: Int, progress: ((Int, Int) -> Unit)? = null): ByteArray {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        try {
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.instanceFollowRedirects = true
-            connection.setRequestProperty("Accept", "application/vnd.github+json")
-            connection.setRequestProperty("User-Agent", "MotoNav-Android")
-            connection.setRequestProperty("Cache-Control", "no-cache")
-            if (connection.responseCode != HttpURLConnection.HTTP_OK) error("GitHub 请求失败：HTTP ${connection.responseCode}")
-            val total = connection.contentLengthLong
-            connection.inputStream.use { input ->
-                val output = ByteArrayOutputStream(if (total in 1..maxBytes) total.toInt() else 16 * 1024)
-                val buffer = ByteArray(16 * 1024)
-                var count: Int
-                var read = 0
-                while (input.read(buffer).also { count = it } >= 0) {
-                    read += count
-                    if (read > maxBytes) {
-                        error("下载文件超过允许大小（已读取 ${read} 字节，上限 ${maxBytes} 字节）")
-                    }
-                    output.write(buffer, 0, count)
-                    progress?.invoke(read, if (total in 1..maxBytes) total.toInt() else -1)
-                }
-                return output.toByteArray()
-            }
-        } finally {
-            connection.disconnect()
+    private fun assetApiUrl(assets: JSONArray, name: String): String {
+        for (i in 0 until assets.length()) {
+            val asset = assets.optJSONObject(i) ?: continue
+            if (asset.optString("name") == name && asset.optLong("id") > 0 && assetUrl(assets, name) != null)
+                return "https://api.github.com/repos/$REPOSITORY/releases/assets/${asset.optLong("id")}"
         }
+        return ""
     }
+
 }

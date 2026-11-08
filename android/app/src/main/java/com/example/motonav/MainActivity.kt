@@ -180,7 +180,7 @@ import java.util.Locale
  *   v8.3.64  行驶信息增加安装姿态校准，两端共用圆屏保存的静态相对倾斜基准。
  *   v8.3.65  修复测试 OTA 候选被旧系列稳定固件覆盖，增加发布可见性核验。
  */
-const val APP_VERSION = "v8.3.68"
+const val APP_VERSION = "v8.3.69"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG
@@ -216,6 +216,7 @@ class MainActivity : AppCompatActivity() {
     private var appUpdateButton: TextView? = null
     private var appUpdateBusy = false
     private var pendingAppInstall: File? = null
+    @Volatile private var updateUiDisposed = false
 
     private companion object {
         const val PICK_OTA_MANIFEST = 4101
@@ -233,6 +234,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setOtaStatus(message: String) = publishOtaState(message)
+
+    private fun onUpdateUi(action: () -> Unit) {
+        if (updateUiDisposed) return
+        runOnUiThread {
+            if (!updateUiDisposed && !isFinishing && !isDestroyed) action()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -1390,7 +1398,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Stable checks remain the default; test firmware requires an explicit check. */
     private fun firmwareUpdateSection(card: LinearLayout) {
-        card.addView(note("停车后检查并安装稳定版。更新时保持手机靠近圆屏，并接入稳定电源。"))
+        card.addView(note("停车后检查并安装稳定版。设备信息读取最多5秒，联网检查最多15秒。更新时保持手机靠近圆屏，并接入稳定电源。"))
         val check = pillButton("检查稳定版更新", PURPLE) { checkGithubOta() }
         val diagnosticCheck = pillButton("检查测试版更新", STROKE) { checkGithubOta(includeDiagnostic = true) }
         val update = pillButton("立即更新圆屏", PINK) { confirmGithubOta() }.apply { visibility = View.GONE }
@@ -1424,7 +1432,7 @@ class MainActivity : AppCompatActivity() {
 
     /** GitHub Release → checked package → the existing signed BLE OTA transport. */
     private fun checkGithubOta(includeDiagnostic: Boolean = false) {
-        if (onlineOtaBusy || BleLink.otaInProgress || otaVerificationVersion != null) return
+        if (updateUiDisposed || onlineOtaBusy || BleLink.otaInProgress || otaVerificationVersion != null) return
         if (!BleLink.isConnected || !BleLink.verified) {
             setOtaStatus("请先连接并完成圆屏配对，再检查更新")
             return
@@ -1435,12 +1443,12 @@ class MainActivity : AppCompatActivity() {
         onlineOtaCheckButton?.apply { isEnabled = false; alpha = 0.55f; text = "正在检查…" }
         onlineOtaUpdateButton?.visibility = View.GONE
         BleLink.refreshDeviceStatus()
-        setOtaStatus("正在读取圆屏状态…")
+        setOtaStatus("正在读取圆屏设备信息…（最多5秒）")
         waitForDeviceStatus()
     }
 
     private fun waitForDeviceStatus(attempt: Int = 0) {
-        if (!onlineOtaBusy) return
+        if (updateUiDisposed || !onlineOtaBusy) return
         if (!BleLink.isConnected || !BleLink.verified) {
             onlineOtaBusy = false
             onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
@@ -1459,18 +1467,18 @@ class MainActivity : AppCompatActivity() {
             setOtaStatus("圆屏已连接，但暂未读到完整设备信息，请稍后重试")
             return
         }
-        setOtaStatus("正在读取圆屏状态…（${attempt + 1}/10）")
+        setOtaStatus("正在读取圆屏设备信息…（最多5秒，${attempt + 1}/10）")
         handler.postDelayed({ waitForDeviceStatus(attempt + 1) }, 500)
     }
 
     private fun runGithubOtaCheck(board: String) {
         val includeDiagnostic = onlineOtaIncludeDiagnostic
-        setOtaStatus(if (includeDiagnostic) "正在检查 GitHub 稳定版和测试版…" else "正在检查 GitHub 稳定版…")
+        setOtaStatus(if (includeDiagnostic) "正在检查 GitHub 稳定版和测试版…（检查最多15秒）" else "正在检查 GitHub 稳定版…（检查最多15秒）")
         Thread {
             try {
                 val candidate = FirmwareUpdateClient.check(board, includeDiagnostic)
                 val channel = if (candidate.diagnostic) "测试版" else "稳定版"
-                runOnUiThread {
+                onUpdateUi {
                     val current = BleLink.screenFirmware
                     val legacyBridge = BleLink.isLegacy175cOtaBaseline()
                     when {
@@ -1510,9 +1518,9 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread { setOtaStatus("检查更新失败：${e.message ?: "网络或发布信息异常"}") }
+                onUpdateUi { setOtaStatus("检查更新失败：${e.message ?: "网络或发布信息异常"}") }
             } finally {
-                runOnUiThread {
+                onUpdateUi {
                     onlineOtaBusy = false
                     onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
                 }
@@ -1532,6 +1540,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun downloadAndStartGithubOta(candidate: FirmwareUpdateClient.Candidate) {
+        if (updateUiDisposed || onlineOtaBusy || BleLink.otaInProgress) return
         onlineOtaBusy = true
         onlineOtaCheckButton?.apply { isEnabled = false; alpha = 0.55f }
         onlineOtaUpdateButton?.apply { isEnabled = false; alpha = 0.55f }
@@ -1540,9 +1549,9 @@ class MainActivity : AppCompatActivity() {
             try {
                 BleLink.otaBlockReason()?.let { error("设备暂不可升级：$it") }
                 val pkg = FirmwareUpdateClient.downloadPackage(candidate) { text ->
-                    runOnUiThread { setOtaStatus(text) }
+                    onUpdateUi { setOtaStatus(text) }
                 }
-                runOnUiThread {
+                onUpdateUi {
                     setOtaStatus("文件校验通过，正在请求圆屏升级…")
                     if (!startOtaPackage(pkg) { setOtaStatus(it) }) {
                         onlineOtaBusy = false
@@ -1551,7 +1560,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread {
+                onUpdateUi {
                     onlineOtaBusy = false
                     onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f }
                     onlineOtaUpdateButton?.apply { isEnabled = true; alpha = 1f }
@@ -1564,9 +1573,9 @@ class MainActivity : AppCompatActivity() {
     private fun startOtaPackage(pkg: OtaPackage, show: (String) -> Unit): Boolean = BleLink.startOta(
         pkg.board, pkg.version, pkg.image, pkg.sha256, pkg.signatureAlgorithm, pkg.signatureKeyId, pkg.signatureBase64,
         object : BleLink.OtaListener {
-            override fun onState(text: String) = runOnUiThread { show(text) }
-            override fun onProgress(sent: Int, total: Int) = runOnUiThread { show("OTA 传输中：$sent / $total 字节") }
-            override fun onFinished(success: Boolean, message: String) = runOnUiThread {
+            override fun onState(text: String) = onUpdateUi { show(text) }
+            override fun onProgress(sent: Int, total: Int) = onUpdateUi { show("OTA 传输中：$sent / $total 字节") }
+            override fun onFinished(success: Boolean, message: String) = onUpdateUi {
                 if (success) {
                     // OTA,DONE only means the signed image was accepted and the
                     // device is rebooting. Confirm the new firmware after BLE
@@ -1588,7 +1597,7 @@ class MainActivity : AppCompatActivity() {
         })
 
     private fun waitForOtaReboot(expectedVersion: String, attempt: Int = 0, connectedAttempt: Int = 0) {
-        if (otaVerificationVersion != expectedVersion) return
+        if (updateUiDisposed || otaVerificationVersion != expectedVersion) return
         if (BleLink.isConnected && BleLink.verified) {
             // BLE can become ready before INFO/FW notifications arrive. Refresh
             // diagnostics as soon as it returns and use a short version-read wait.
@@ -1622,42 +1631,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmOtaReboot(expectedVersion: String) {
-        val diagnostic = otaVerificationDiagnostic
-        val channel = if (diagnostic) "测试版" else "稳定版"
-        setOtaStatus("圆屏已重新连接，正在确认 GitHub ${channel}…")
-        Thread {
-            try {
-                val latest = FirmwareUpdateClient.check(BleLink.screenBoard, diagnostic)
-                runOnUiThread {
-                    if (otaVerificationVersion != expectedVersion) return@runOnUiThread
-                    otaVerificationVersion = null
-                    onlineOtaBusy = false
-                    onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
-                    if (latest.version == expectedVersion || !FirmwareUpdateClient.isNotOlder(latest.version, expectedVersion)) {
-                        onlineOtaCandidate = null
-                        onlineOtaUpdateButton?.visibility = View.GONE
-                        setOtaStatus("更新完成：圆屏已重启并重新连接，当前${channel} $expectedVersion 已确认")
-                    } else {
-                        onlineOtaCandidate = latest
-                        onlineOtaUpdateButton?.apply {
-                            text = "更新至 ${latest.version}"
-                            visibility = View.VISIBLE
-                            isEnabled = true
-                            alpha = 1f
-                        }
-                        setOtaStatus("更新完成：当前圆屏版本 $expectedVersion；发现新的${if (latest.diagnostic) "测试版" else "稳定版"} ${latest.version}")
-                    }
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    if (otaVerificationVersion != expectedVersion) return@runOnUiThread
-                    otaVerificationVersion = null
-                    onlineOtaBusy = false
-                    onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
-                    setOtaStatus("圆屏已重启并连接，当前版本已确认为 $expectedVersion；${channel}检查失败，可稍后重试")
-                }
-            }
-        }.start()
+        if (updateUiDisposed || otaVerificationVersion != expectedVersion ||
+            !BleLink.isConnected || !BleLink.verified || BleLink.screenFirmware != expectedVersion) return
+        val channel = if (otaVerificationDiagnostic) "测试版" else "稳定版"
+        otaVerificationVersion = null
+        onlineOtaBusy = false
+        onlineOtaCandidate = null
+        onlineOtaCheckButton?.apply { isEnabled = true; alpha = 1f; text = "检查稳定版更新" }
+        onlineOtaUpdateButton?.visibility = View.GONE
+        setOtaStatus("更新完成：圆屏已重启并重新连接，当前${channel} $expectedVersion 已确认")
     }
 
     /** v6.2 Key 设置：显示两个 key 填没填，点「填写 / 修改」弹出填写页 */
@@ -1738,7 +1720,7 @@ class MainActivity : AppCompatActivity() {
     private fun aboutSection(card: LinearLayout) {
         card.addView(settingRow("当前版本", "已安装的 MotoNav App 版本", label(APP_VERSION, 14f, TEXT, bold = true)))
         card.addView(divider())
-        val status = label("可检查 GitHub 正式版更新", 12f, SUB).apply {
+        val status = label("可检查 GitHub 正式版更新（检查最多15秒）", 12f, SUB).apply {
             setLineSpacing(0f, 1.15f)
             setPadding(0, dp(6), 0, dp(8))
         }
@@ -1750,31 +1732,33 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkAppUpdate() {
-        if (appUpdateBusy) return
+        if (updateUiDisposed || appUpdateBusy) return
+        val appContext = applicationContext
         appUpdateBusy = true
         appUpdateButton?.apply { isEnabled = false; alpha = 0.55f; text = "正在检查…" }
-        appUpdateStatusView?.text = "正在检查 GitHub 最新正式版…"
+        appUpdateStatusView?.text = "正在检查 GitHub 最新正式版…（检查最多15秒）"
         Thread {
             try {
                 val candidate = AppUpdateClient.check()
                 if (!AppUpdateClient.isNewer(candidate.version, APP_VERSION)) {
-                    runOnUiThread { finishAppUpdateCheck("当前已是最新版本 $APP_VERSION") }
+                    onUpdateUi { finishAppUpdateCheck("当前已是最新版本 $APP_VERSION") }
                     return@Thread
                 }
-                runOnUiThread { appUpdateStatusView?.text = "发现新版本 ${candidate.version}，正在下载…" }
-                val apk = AppUpdateClient.download(this, candidate) { read, total ->
-                    val percent = if (total > 0) read * 100 / total else 0
-                    runOnUiThread { appUpdateStatusView?.text = "正在下载 App 更新：$percent%" }
+                if (updateUiDisposed) return@Thread
+                onUpdateUi { appUpdateStatusView?.text = "发现新版本 ${candidate.version}，正在下载…" }
+                val apk = AppUpdateClient.download(appContext, candidate) { read, total ->
+                    val percent = if (total > 0) (read.toLong() * 100 / total).toInt().coerceIn(0, 100) else 0
+                    onUpdateUi { appUpdateStatusView?.text = "正在下载 App 更新：$percent%" }
                 }
-                val installedVersion = AppUpdateClient.verify(this, apk, candidate.version)
-                runOnUiThread {
+                val installedVersion = AppUpdateClient.verify(appContext, apk, candidate.version)
+                onUpdateUi {
                     appUpdateBusy = false
                     appUpdateButton?.apply { isEnabled = true; alpha = 1f; text = "安装新版本 $installedVersion" }
                     appUpdateStatusView?.text = "下载完成，正在打开系统安装确认…"
                     openSystemInstaller(apk)
                 }
             } catch (e: Exception) {
-                runOnUiThread {
+                onUpdateUi {
                     finishAppUpdateCheck("检查或下载失败：${e.message ?: "网络或安装包异常"}")
                 }
             }
@@ -1788,6 +1772,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openSystemInstaller(apk: File) {
+        if (updateUiDisposed || isFinishing || isDestroyed) return
         if (!apk.exists()) {
             finishAppUpdateCheck("安装包不存在，请重新检查更新")
             return
@@ -2287,6 +2272,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        updateUiDisposed = true
         imuBaselinePanel?.cancelCapture("页面已退出，采集取消")
         if (rideInfoSamplingOwned) {
             BleLink.setImuDiagnosticsStream(false)
