@@ -20,6 +20,8 @@ Android `v8.3.69 / versionCode 171`。圆屏沿用 `v7.12.9-nav.15-imu-sampling-
 
 每次发布资产后执行 `scripts/update-github-feed.ps1`，再提交并推送 `updates/latest.json` 到 `175c-ota-one-click`。目录只从公开Release生成，包含官方资产ID、大小及App哈希；失败不覆盖旧目录，历史稳定入口滚出第一页时先核对旧资产仍然公开再保留。
 
+发布电脑已登录GitHub CLI时可给两个脚本加 `-UseGhAuthentication`，避免发布核验耗尽共享出口的匿名API额度；App本身仍读取公开目录，无需登录或Token。
+
 最后执行 `scripts/verify-github-release.ps1 -Tag <tag> -ExpectedCommit <build-commit> -RequireApp -RequireFeed -AssetDirectory <folder>`。目录与Release均需公开可读且资产一致，不能只上传文件后忘记更新目录。
 
 ## 验证
@@ -29,4 +31,4 @@ Android `v8.3.69 / versionCode 171`。圆屏沿用 `v7.12.9-nav.15-imu-sampling-
 本机请求耗时不能保证手机网络相同；新版在网络不可用时按时返回具体错误，恢复检查按钮。旧App更新入口若仍504，可从本Release直接安装原签名APK，保留原有配置和记录。
 
 
-最终APK SHA-256：`fedded831da061948086059fdb4a9cb751b1002e757e32ae7bd197f3d44140fe`。原签名SHA-1 `49:7D:D6:15:13:34:EA:38:CD:C1:0A:7C:EB:C2:57:42:FE:85:B8:5C`；API30模拟器冷启动成功，未记录启动崩溃。更新传输31项、固件策略38项、原版本排序41项通过（共110项）；四次阻塞请求共用总时限实测15.009秒返回，单个来源无响应约4秒切换。
+最终APK SHA-256：`fedded831da061948086059fdb4a9cb751b1002e757e32ae7bd197f3d44140fe`。原签名SHA-1 `49:7D:D6:15:13:34:EA:38:CD:C1:0A:7C:EB:C2:57:42:FE:85:B8:5C`；API30模拟器冷启动成功，未记录启动崩溃。更新传输31项、固件策略38项、原版本排序41项通过（共110项）；四次阻塞请求共用总时限实测15.004秒返回，单个来源无响应约4秒切换。

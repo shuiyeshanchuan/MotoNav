@@ -1,7 +1,8 @@
 param(
     [string]$OutputPath = '',
     [string]$ExistingFeedPath = '',
-    [string]$IndexCacheDirectory = ''
+    [string]$IndexCacheDirectory = '',
+    [switch]$UseGhAuthentication
 )
 
 <#
@@ -25,6 +26,26 @@ if (-not $ExistingFeedPath) {
 if (-not $IndexCacheDirectory) { $IndexCacheDirectory = Join-Path $projectRoot '.tools/tmp/github-update-index-cache' }
 
 function Read-PublicBytes([string]$Url, [string]$Accept = 'application/vnd.github+json') {
+    if ($UseGhAuthentication -and $Url.StartsWith("$api/", [StringComparison]::Ordinal)) {
+        # gh owns credentials and redirect handling; tokens never enter arguments or logs.
+        $start = [Diagnostics.ProcessStartInfo]::new((Get-Command gh -ErrorAction Stop).Source)
+        $start.UseShellExecute = $false
+        $start.CreateNoWindow = $true
+        $start.RedirectStandardOutput = $true
+        $start.RedirectStandardError = $true
+        foreach ($argument in @('api', $Url, '-H', "Accept: $Accept")) { $start.ArgumentList.Add($argument) }
+        $process = [Diagnostics.Process]::Start($start)
+        $output = [IO.MemoryStream]::new()
+        try {
+            $copy = $process.StandardOutput.BaseStream.CopyToAsync($output)
+            $errors = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit(20000)) { $process.Kill(); throw "GitHub publishing API timeout: $Url" }
+            [void]$copy.GetAwaiter().GetResult()
+            if ($process.ExitCode -ne 0) { throw "GitHub publishing API failed: $($errors.GetAwaiter().GetResult())" }
+            if ($output.Length -gt 2MB) { throw "Response exceeds 2 MiB: $Url" }
+            return ,$output.ToArray()
+        } finally { $output.Dispose(); $process.Dispose() }
+    }
     $request = @{
         Uri = $Url; TimeoutSec = 20; UseBasicParsing = $true; MaximumRedirection = 5
         Headers = @{ Accept = $Accept; 'User-Agent' = 'MotoNav-Update-Feed'; 'Cache-Control' = 'no-cache' }

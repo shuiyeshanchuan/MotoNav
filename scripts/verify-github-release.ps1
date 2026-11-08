@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedCommit,
     [switch]$RequireApp,
     [switch]$RequireFeed,
+    [switch]$UseGhAuthentication,
     [string]$AssetDirectory = ''
 )
 
@@ -11,6 +12,11 @@ $ErrorActionPreference = 'Stop'
 $api = 'https://api.github.com/repos/shuiyeshanchuan/MotoNav'
 $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'MotoNav-Android'; 'Cache-Control' = 'no-cache' }
 function Read-PublicJson([string]$Url) {
+    if ($UseGhAuthentication -and $Url.StartsWith("$api/", [StringComparison]::Ordinal)) {
+        $json = & gh api $Url -H 'Accept: application/vnd.github+json'
+        if ($LASTEXITCODE -ne 0) { throw "GitHub publishing API failed: $Url" }
+        return ($json -join "`n") | ConvertFrom-Json
+    }
     $request = @{ Uri = $Url; Headers = $headers; TimeoutSec = 30 }
     $proxyUrl = if ($env:HTTPS_PROXY) { $env:HTTPS_PROXY } else { $env:HTTP_PROXY }
     if ($proxyUrl) { $request.Proxy = $proxyUrl }

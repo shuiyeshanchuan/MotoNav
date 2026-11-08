@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-11-08T09:45:47.8420413Z",
+  "app": {
+    "version": "v8.3.69",
+    "apkUrl": "https://github.com/shuiyeshanchuan/MotoNav/releases/download/motonav-v8.3.69/app-release.apk",
+    "apkApiUrl": "https://api.github.com/repos/shuiyeshanchuan/MotoNav/releases/assets/723516339",
+    "bytes": 52340151,
+    "sha256": "fedded831da061948086059fdb4a9cb751b1002e757e32ae7bd197f3d44140fe",
+    "releaseTag": "motonav-v8.3.69"
+  },
+  "firmwares": [
+    {
+      "board": "175C",
+      "version": "v7.12.9-nav.15-imu-sampling-log-test",
+      "channel": "diagnostic",
+      "manifestUrl": "https://github.com/shuiyeshanchuan/MotoNav/releases/download/motonav-v8.3.68/MotoNav_universal_1.75C_v7.12.9-nav.15-imu-sampling-log-test_panel0-imu-diagnostic_manifest.json",
+      "imageUrl": "https://github.com/shuiyeshanchuan/MotoNav/releases/download/motonav-v8.3.68/MotoNav_universal_1.75C_v7.12.9-nav.15-imu-sampling-log-test_panel0-imu-diagnostic_app_0x10000.bin",
+      "manifestApiUrl": "https://api.github.com/repos/shuiyeshanchuan/MotoNav/releases/assets/723422416",
+      "imageApiUrl": "https://api.github.com/repos/shuiyeshanchuan/MotoNav/releases/assets/723422417",
+      "releaseName": "MotoNav v8.3.68 测试版 · nav.15 采样调度与完整行程日志",
+      "notes": "# MotoNav v8.3.68 测试版 · 采样调度与完整行程日志\n\nAndroid `v8.3.68 / versionCode 170`，1.75C `v7.12.9-nav.15-imu-sampling-log-test`。\n\n11月8日骑行约19分钟，保存17,358组数据，序号和文件校验正常，但25 Hz计划时隙中有11,251个未采到，实际15.17 Hz。本轮解决采样与显示共用主循环的问题，并补齐下一次能够回放的证据；不调整急刹阈值或短信发送决策。\n\n## 更新后怎么使用\n\n1. 先更新手机App，再在小圆屏固件更新中点“检查测试版更新”安装nav15。签名BLE OTA即可，无须USB重烧、改分区或重新校准已有安装参考。\n2. 正常开始导航，自动记录；正常结束导航，等待“连续记录已保存”，在行驶信息页导出最近会话ZIP。无需手动逐场景记录60秒。\n3. 日常数据采集无需开启急刹报警测试。若要验证倒计时和取消，停车时用“保存并立即演练倒计时”，保持真实短信关闭即可；测试规则与v8.3.67一致。\n4. 反馈ZIP和实际场景，例如静置、推车、正常刹车、路面颠簸，以及测试是否手动开启。不需要制造事故或危险急刹。\n\n## 固件采集\n\n- 保留QMI8658现有约112.1 Hz硬件ODR和量程、滤波、自检；专用采集任务5 ms轮询，只读取新数据，不重复旧快照凑频率。记录环仍按40 ms固定相位选择真实样本，目标25 Hz。\n- IMU、触摸与电源芯片共用I²C，互斥覆盖完整寄存器读取和读缓冲消费。采集任务不绘图、不发送BLE、不写NVS；主循环继续独占健康聚合、安装参考和记录环。\n- 新采集事件队列固定256条，每条52字节，原始数据13,312 B；另有队列状态、4,096 B任务栈和RTOS对象。按112.1 Hz约缓冲2.28秒，满后丢弃新事件并显式统计。原4096条×32 B的PSRAM记录环和写盘ACK保持。\n- `missedSlots`仍统计40 ms计划时隙未产生记录的数量；`readErrors`保留读取失败；`overflow`同时涵盖采集队列丢弃和记录环覆盖，可能与漏采/序号缺口重叠，不能相加当作蓝牙丢包率。采集队列累计丢弃另有串口日志。\n- START/STOP先消费命令时间栅栏之前的队列，防止旧样本跨会话或结束时遗漏已经采到的样本。超过队列容量的阻塞仍会丢数据，不声称无限缓存。\n\n## 手机行程日志\n\n原 `samples.csv` 和 `metadata.properties` 保持schema1及旧恢复语义；新增同目录 `journey.csv`，逐行CRC，保存：\n\n- 原始BLE批头 `firstSeq/nextSeq/oldestSeq/count/boardNow/flags/boot`、完整批次样本及重复接收，避免把手机durable-next误当板端nextSeq。\n- GPS瞬时速度、精度、原始定位时间、手机收到墙钟/单调时间、来源及真实/模拟标签；使用源坐标系，不伪造GPS。\n- App/完整固件身份、安装参考状态和版本、检测器参数、导航/连接变化。\n- 单次测试启停、门控变化、触发、倒计时取消/到期、短信提交/发送/送达或中断。稀疏关键事件落盘；高频状态合并，原始GPS和批次仍保留。\n\n匿名事件token通过预算内的小型持久索引关联原行程，导航结束甚至新导航开始后的迟到回执仍写回原目录。未开始导航的演练单独标为 `diagnostic_only`，不冒充骑行。导出不包含联系人号码、骑行人姓名、提示或短信正文；GPS位置本身属于敏感数据，按用户选择本地导出。\n\n写盘仍使用64项有界任务队列，额外日志缓冲最多64 KiB，正常每秒同步，并在IMU批次ACK、关键事件、结束和导出前同步。ACK需新侧录文件和旧样本文件均落盘；进程异常退出可能丢失尚未同步的非关键GPS/状态尾部，恢复会截掉坏CRC尾行和不完整原始批次。总预算仍为512 MiB、空闲空间下限64 MiB，不静默删除历史。\n\n完整固件身份新增独立有界分片，支持默认MTU23并校验完整INFO正文CRC；丢片超时后手机有限次重查。旧文本FW前缀不再被视作完整身份；旧版设备仍可使用原协议。IMU批协议、导航数据和OTA签名",
+      "prerelease": false,
+      "publishedAt": "2026-11-08T08:51:31Z"
+    },
+    {
+      "board": "175C",
+      "version": "v7.12.9-nav.6",
+      "channel": "stable",
+      "manifestUrl": "https://github.com/shuiyeshanchuan/MotoNav/releases/download/motonav-v8.3.47/MotoNav_universal_1.75C_v7.12.9-nav.6_panel0_manifest.json",
+      "imageUrl": "https://github.com/shuiyeshanchuan/MotoNav/releases/download/motonav-v8.3.47/MotoNav_universal_1.75C_v7.12.9-nav.6_panel0_app_0x10000.bin",
+      "manifestApiUrl": "https://api.github.com/repos/shuiyeshanchuan/MotoNav/releases/assets/688958397",
+      "imageApiUrl": "https://api.github.com/repos/shuiyeshanchuan/MotoNav/releases/assets/688958393",
+      "releaseName": "MotoNav v8.3.47 · 1.75C v7.12.9-nav.6",
+      "notes": "# MotoNav v8.3.47 · 1.75C v7.12.9-nav.6\n\n## 本次更新\n\n- 普通电话灵动岛改为一张完整圆角卡片，分开标题、来电人/号码、长按提示和进度条，消除旧版两张卡片交叠造成的断边与拥挤。\n- 微信来电继续先使用微信通知自己提供的 `PendingIntent` 接听动作。当前用户实测的通知没有接听动作、微信动作或 `EXTRA_ANSWER_INTENT`，因此没有可由 MotoNav 直接调用的公开微信接听接口。\n- 圆屏只在存在直接通知动作，或无障碍服务当前识别到微信页面明确的接听控件时显示可接听。仅打开微信来电页会标记为“尚未接通”，不会冒充接听成功。\n- 高级诊断增加“直接接口”和“当前路径”，便于区分通知动作、无障碍页面点击和手机接听。\n\n## 接听路径说明\n\n- 普通蜂窝电话使用 Android Telecom 的系统接听接口。\n- 微信电话属于微信自己的 VoIP 通话。微信没有向这次通知提供第三方可调用的接听 `PendingIntent`，Android 也没有按包名直接接管微信通话的通用接口。\n- 无障碍点击是没有公开接口时的兼容路径，必须由用户授权，并且微信来电页必须在前台暴露明确的“接听”控件；打开页面本身不代表通话已经接通。\n\n## 升级路径\n\n- Android `8.3.47`，`versionCode 150`：使用 App“设置 → 关于 MotoNav → 版本更新”安装，或使用 Release 的 `app-release.apk`。\n- 1.75C 固件 `v7.12.9-nav.6`：通过 App OTA 更新，稳定索引仍只使用签名后的 `*_app_0x10000.bin`；`*_full_0x0.bin` 仅用于 USB 救援。\n\n## 验证状态与限制\n\n- Android release 构建、原证书验签、固件 OTA 签名和 manifest 校验需要在发布前完成。\n- 需要用户在真实圆屏检查普通电话卡片排版、长号码/联系人、隐私模式和长按进度。\n- 需要真实微信来电确认通知动作是否仍为空，以及微信页面暴露接听控件时无障碍点击后是否实际接通。圆屏显示“已点击”或“已发送”都不等于实际通话已接通。",
+      "prerelease": false,
+      "publishedAt": "2026-10-29T15:21:28Z"
+    }
+  ]
+}
