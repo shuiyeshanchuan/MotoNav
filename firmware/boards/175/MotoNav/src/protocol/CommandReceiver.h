@@ -492,6 +492,7 @@ void handleMessage(const uint8_t *d, int n) {
   // navigation look current or feed arbitrary binary bytes to handleText().
   if (handleContinuousImuRecordControl(d, n)) return;
   if (handleEmergencyAlarmCommand(d, n)) return;
+  if (n == 4 && memcmp(d, "#ID?", 4) == 0) { queueDeviceInfo(); return; }
   if (n >= 2 && d[0] == 'B' && (d[1] == 14 || d[1] == 15)) { handleBitmap(d, n); return; }
   lastRxMs = millis();
   if (staleShown) { staleShown = false; navDirty = true; }   // 收到任何消息，清掉数据中断提示

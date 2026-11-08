@@ -6,6 +6,7 @@
 #include <Arduino.h>
 #include "src/core/DeviceContext.h"
 #include "src/core/FunctionDeclarations.h"
+#include "src/core/SharedWire.h"
 #include "src/power/Battery.h"
 #include "src/ota/BleOta.h"
 #include "src/connectivity/Bluetooth.h"
@@ -55,6 +56,7 @@ void setup() {
   Serial.printf("Reset reason=%d, sleep wake=%d\n", (int)esp_reset_reason(),
                 (int)esp_sleep_get_wakeup_cause());
   esp_ota_mark_app_valid_cancel_rollback();
+  initSharedWire();
   Wire.begin(IIC_SDA, IIC_SCL);
   touchInit();                                         // v5.2 触摸屏
   powerButtonInit();                                   // 1.75C PWR 键：2 秒弹出软件电源菜单
@@ -167,6 +169,7 @@ void setup() {
   queueDeviceSelfTest();
   printDeviceDiagnosticsSerial();
   idlePowerOffReset(&idlePowerOffTimer, millis());
+  startImuSamplingTask();                              // no display/BLE work in the sampler
   Serial.println(String("MotoNav ready, firmware ") + FW_VERSION);
 }
 
@@ -175,6 +178,7 @@ void setup() {
 
 // 主循环：接收消息、处理输入、调度页面、绘图和推屏。
 void loop() {
+  imuDiagnosticsTick();                                // consume real samples before RX controls
   powerButtonPoll();                                   // Keep PWR responsive while navigation is busy.
   if (powerMenuOn && sliding) dragAbort();
   hidMediaTick();                                      // press/release without blocking navigation

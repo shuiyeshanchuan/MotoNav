@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Properties;
 import java.util.zip.CRC32;
 
@@ -105,7 +106,76 @@ public final class ContinuousImuStoreTest {
         check(full && cursor<800,"bounded quota stops instead of growing without limit");
         fails(()->quota.append(batch(1,1,800,8,808,0,0,0,1),WALL+100,100),IOException.class,"poisoned store refuses subsequent ACKs");
         check(new File(quota.snapshot().directory,"samples.csv").isFile(),"budget failure preserves history");
+        journey(new File(root,"journey"));
         System.out.println("Continuous IMU store: "+checks+" filesystem checks passed");
+    }
+
+    private static void validTrace(File directory) throws IOException {
+        try(java.util.stream.Stream<String> rows=Files.lines(new File(directory,"journey.csv").toPath())) {
+            rows.filter(row->!row.startsWith("#")).forEach(row->{
+                int comma=row.lastIndexOf(',');check(comma>0,"trace has checksum");
+                check(line(row.substring(0,comma)).trim().equals(row),"trace row CRC matches");
+            });
+        }
+    }
+    private static void journey(File root) throws Exception {
+        ContinuousImuStore s=new ContinuousImuStore(root,32L*1024*1024,0);
+        s.start(100,"导航","原始证据",false,WALL,0);File original=s.snapshot().directory;
+        ContinuousImuProtocol.Batch raw=batch(100,33,0,8,1000,3,7,2,1);
+        check(s.append(raw,WALL+1,10)==8,"wire backlog next is independent of ACK cursor");
+        s.append(raw,WALL+2,20);
+        File trace=new File(original,"journey.csv");String data=Files.readString(trace.toPath());
+        check(data.contains("H,100,33,0,1000,0,8,"),"trace preserves complete wire header, including backlog");
+        check(data.lines().filter(v->v.startsWith("W,")).count()==16,"raw trace preserves retransmitted sample duplicates");
+        check(s.snapshot().writtenSamples==8 && s.snapshot().duplicateSamples==8,"legacy journal remains deduplicated");
+        s.traceGps(original,31.12,121.45,23.125,4.5,WALL-900,WALL,42,false,"amap_navi_gcj02");
+        check(!Files.readString(trace.toPath()).contains("P,31.12"),"GPS buffers without per-fix fsync");
+        s.flushTrace();
+        check(Files.readString(trace.toPath()).contains("P,31.12,121.45,23.125,4.5,"+(WALL-900)+","+WALL+",42,900,-858,true,false,"),
+                "GPS instantaneous speed and acquisition/receive times are distinct");
+        s.traceEvent(original,"identity",0,Map.of("firmware","v7.12.9-nav.16-test","firmware_complete","true"),WALL,43,true);
+        s.bindEventToken(900,original);
+        s.traceEvent(original,"alert_started",900,Map.of("state","COUNTDOWN","name","SECRET_NAME","phone","SECRET_PHONE",
+                "body","SECRET_SMS","prompt","SECRET_PROMPT"),WALL,44,true);
+        s.stop("navigation_ended",WALL+10,50);
+        s.start(101,"导航","第二段",false,WALL+20,60);File newer=s.snapshot().directory;
+        s.traceEvent(s.eventDirectory(900),"sms_result",900,Map.of("part","1","result","sent"),WALL+30,70,true);
+        check(s.snapshot().directory.equals(newer),"late callback never changes active IMU session");
+        check(Files.readString(trace.toPath()).contains(Base64.getEncoder().encodeToString("sms_result".getBytes(StandardCharsets.UTF_8))),"late callback appends to original closed journey");
+        String newerData=Files.readString(new File(newer,"journey.csv").toPath());
+        check(!newerData.contains(",900,"),"late callback excluded from new journey");
+        String plain=Files.readString(trace.toPath());
+        for(String secret:new String[]{"SECRET_NAME","SECRET_PHONE","SECRET_SMS","SECRET_PROMPT"}) {
+            check(!plain.contains(Base64.getEncoder().encodeToString(secret.getBytes(StandardCharsets.UTF_8))),"sensitive field excluded: "+secret);
+        }
+        s.stop("completed",WALL+40,80);
+        s.start(102,"导航","等待旧板尾部",false,WALL+41,81);File draining=s.snapshot().directory;
+        File drill=s.diagnosticSession(103,WALL+42,82);
+        s.traceEvent(drill,"alert_started",901,Map.of("source","manual_drill"),WALL+43,83,true);
+        check(s.snapshot().directory.equals(draining) && s.snapshot().active,"independent diagnostic does not alter active drain state");
+        check(s.append(batch(102,34,0,2,2,0,0,0,2),WALL+44,84)==2,"old board tail remains appendable after separate diagnostic");
+        s.stop("navigation_ended",WALL+45,85);
+        check("diagnostic_only".equals(properties(drill).getProperty("mode")) && "false".equals(properties(drill).getProperty("active")),"diagnostic session cannot claim active navigation");
+        fails(()->s.bindEventToken(900,newer),IOException.class,"token cannot be silently rebound to a different journey");
+        File outside=new File(root.getParentFile(),"outside");outside.mkdirs();Files.writeString(new File(outside,"metadata.properties").toPath(),"test");
+        fails(()->s.traceEvent(outside,"test",0,Map.of(),WALL,1,true),IOException.class,"trace path cannot escape root");
+        validTrace(original);validTrace(newer);
+
+        // A valid H CRC with an incomplete W group must not masquerade as a replayable received batch.
+        long good=trace.length();
+        appendText(trace,line("H,100,33,8,1000,0,2,1000,1,3,7,2,0,0,"+WALL+",90"));
+        appendText(trace,line("W,100,33,8,0,8,1000,0.0,0.0,9.8,-7.0,0.6,0.1,36.0"));
+        appendText(trace,"W,100,33,8,1,9,torn");
+        ContinuousImuStore restarted=new ContinuousImuStore(root,32L*1024*1024,0);
+        check(restarted.recoverUnfinished().isEmpty(),"trace extension does not re-open completed schema1 sessions");
+        check(trace.length()==good,"finished journey torn batch is truncated as one unit");
+        check(restarted.eventDirectory(900).equals(original.getCanonicalFile()),"token binding survives process restart");
+        restarted.traceEvent(restarted.eventDirectory(900),"sms_result",900,Map.of("delivery","delivered"),WALL+50,100,true);
+        check(trace.length()>good,"post-restart late callback appends to same original journey");
+        long crcGood=trace.length();appendText(trace,"E,invalid,0,1,2,00000000\n"+line("P,1,2,3,4,5,6,7,true,false,eA=="));
+        new ContinuousImuStore(root,32L*1024*1024,0).recoverUnfinished();
+        check(trace.length()==crcGood,"CRC-invalid trace suffix and later rows are removed");
+        validTrace(original);
     }
     private static void seed(File root) throws Exception {
         for(String name:new String[]{"torn","crc","malformed","reboot"}) {
@@ -149,8 +219,16 @@ public final class ContinuousImuStoreTest {
         ContinuousImuStore s=new ContinuousImuStore(root,32L*1024*1024,0);
         s.start(999,"导航","synthetic one hour at 25 Hz",false,WALL,0);
         long begin=System.nanoTime();
+        File directory=s.snapshot().directory;
+        long nextGps=0;int gpsCount=0;
         for(int first=0;first<total;first+=8) {
             int count=Math.min(8,total-first);
+            while(nextGps<=first*40L) {
+                s.traceGps(directory,31.1+gpsCount*0.000001,121.4,Math.max(0,40.5-gpsCount%30),4.2,
+                        WALL+nextGps-100,WALL+nextGps,nextGps,false,"synthetic_gcj02");
+                if(gpsCount%60==0) s.traceEvent(directory,"detector_state",0,Map.of("state","READY"),WALL+nextGps,nextGps,false);
+                nextGps+=1000;gpsCount++;
+            }
             long ack=s.append(batch(999,33,first,count,first+count,0,0,0,1),WALL+first*40L,first*40L);
             check(ack==first+count,"long-run durable cursor "+first);
         }
@@ -160,7 +238,16 @@ public final class ContinuousImuStoreTest {
         long rows;
         try(java.util.stream.Stream<String> lines=Files.lines(new File(stats.directory,"samples.csv").toPath())) { rows=lines.filter(v->v.startsWith("S,")).count(); }
         check(rows==total,"streaming disk sample count");
-        System.out.println("Continuous IMU long run: "+total+" synthetic samples persisted under 32 MiB heap in "+((System.nanoTime()-begin)/1000000)+" ms; journal="+new File(stats.directory,"samples.csv").length()+" bytes");
+        long rawRows,gpsRows,headers;
+        try(java.util.stream.Stream<String> lines=Files.lines(new File(directory,"journey.csv").toPath())) { rawRows=lines.filter(v->v.startsWith("W,")).count(); }
+        try(java.util.stream.Stream<String> lines=Files.lines(new File(directory,"journey.csv").toPath())) { gpsRows=lines.filter(v->v.startsWith("P,")).count(); }
+        try(java.util.stream.Stream<String> lines=Files.lines(new File(directory,"journey.csv").toPath())) { headers=lines.filter(v->v.startsWith("H,")).count(); }
+        check(rawRows==total && gpsRows==3600 && headers==11250,"one-hour all raw batch headers, samples and 1Hz GPS persisted");
+        validTrace(directory);
+        long bytes;
+        try(java.util.stream.Stream<java.nio.file.Path> files=Files.walk(root.toPath())) { bytes=files.filter(Files::isRegularFile).mapToLong(p->{try{return Files.size(p);}catch(IOException e){throw new java.io.UncheckedIOException(e);}}).sum(); }
+        check(bytes<32L*1024*1024,"one-hour unified package stays below shared 32MiB budget");
+        System.out.println("Continuous IMU long run: "+total+" synthetic samples + "+gpsRows+" GPS under 32 MiB heap in "+((System.nanoTime()-begin)/1000000)+" ms; samples="+new File(stats.directory,"samples.csv").length()+" bytes; journey="+new File(directory,"journey.csv").length()+" bytes; total="+bytes);
     }
     public static void main(String[] args) throws Exception {
         if(args.length!=2)throw new IllegalArgumentException("root mode required");

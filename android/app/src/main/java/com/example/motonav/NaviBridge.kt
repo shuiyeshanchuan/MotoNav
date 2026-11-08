@@ -696,13 +696,13 @@ object NaviBridge {
     // ================= v1.7：车速 =================
 
     private fun onLocation(loc: AMapNaviLocation, epoch: Long) {
+        val receivedAt = now()
+        val receivedWall = System.currentTimeMillis()
         val reliable = loc.accuracy.isFinite() && loc.accuracy in 0f..50f
         val kmh = if (reliable) loc.speed.roundToInt().coerceAtLeast(0) else -1
         speedKmhNow = kmh.coerceAtLeast(0)
         uiSpeed = kmh                                                            // v3.0
         val c = loc.coord
-        val receivedAt = now()
-        val receivedWall = System.currentTimeMillis()
         val fixStamp = loc.time ?: 0L
         val idleSpeed = loc.speed.toDouble()
         val idleLat = c?.latitude ?: Double.NaN
@@ -712,7 +712,7 @@ object NaviBridge {
         handler.post {
             if (!arrivalSession.isOpen(epoch)) return@post
             if (cruising) cruiseIdle.onFix(receivedAt, fixStamp, idleSpeed, idleLat, idleLng, idleAccuracy)
-            RideRecorder.onFix(idleLat,idleLng,fixStamp,receivedWall,idleAccuracy,idleSpeed)
+            RideRecorder.onFix(idleLat,idleLng,fixStamp,receivedWall,idleAccuracy,idleSpeed,receivedAt,"amap_navi_gcj02")
             publishAccidentFix(
                 c?.latitude ?: 0.0, c?.longitude ?: 0.0, c != null,
                 kmh, idleAccuracy, receivedAt)
@@ -1186,7 +1186,13 @@ object NaviBridge {
                 isLocationCacheEnable = false
                 isOffset = true
             })
-            client.setLocationListener { fix -> handler.post {
+            client.setLocationListener { fix ->
+                val receivedMono = now()
+                val receivedWall = System.currentTimeMillis()
+                if (fix != null && fix.errorCode == 0) ContinuousImuRecorder.recordGpsFix(fix.latitude, fix.longitude,
+                    fix.speed.toDouble() * 3.6, fix.accuracy.toDouble(), fix.time, receivedWall, receivedMono,
+                    if (fix.coordType.equals("GCJ02", true)) "amap_location_gcj02" else "amap_location_unknown_coords")
+                handler.post {
                 if (!cruising || cruiseLocation !== client || fix == null || fix.errorCode != 0) return@post
                 val age = System.currentTimeMillis() - fix.time
                 if (fix.time <= lastCruiseFixStamp || age !in -2000..15000 ||
@@ -1208,8 +1214,9 @@ object NaviBridge {
                 if (speedMsg != lastSpeedMsg) { lastSpeedMsg = speedMsg; BleLink.send(speedMsg) }
                 Brightness.updateLocation(lat, lng)
                 cruiseIdle.onFix(now(), fix.time, fix.speed.toDouble(), lat, lng, fix.accuracy.toDouble())
-                RideRecorder.onFix(lat, lng, fix.time, System.currentTimeMillis(),
-                    fix.accuracy.toDouble(), fix.speed.toDouble())
+                // AMapLocation.getSpeed is m/s; RideRecorder's input is km/h.
+                RideRecorder.onFix(lat, lng, fix.time, receivedWall,
+                    fix.accuracy.toDouble(), fix.speed.toDouble() * 3.6, receivedMono,"amap_location_gcj02",true)
                 publishAccidentFix(lat, lng, true, kmh, fix.accuracy.toDouble(), now())
             } }
             cruiseLocation = client

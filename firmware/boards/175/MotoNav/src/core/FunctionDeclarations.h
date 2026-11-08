@@ -231,7 +231,8 @@ void initContinuousImuRecord();
 bool handleContinuousImuRecordControl(const uint8_t *data, int size);
 void continuousImuRecordSample(uint32_t now, float ax, float ay, float az,
                                float gx, float gy, float gz, float temperature);
-void continuousImuRecordReadError();
+void continuousImuRecordReadError(uint32_t count = 1);
+void continuousImuRecordAcquisitionOverflow(uint32_t count);
 void continuousImuRecordDisconnected();
 void continuousImuRecordNotifyTick();
 bool handleEmergencyAlarmCommand(const uint8_t *data, int size);

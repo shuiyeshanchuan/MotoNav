@@ -85,7 +85,9 @@ object RideRecorder {
     fun distanceText(m: Double) = if (m < 1000) "${m.toInt()} 米" else String.format(Locale.CHINA,"%.2f 公里",m/1000)
     fun durationText(ms: Long): String { val m = ms.coerceAtLeast(0)/60000; return if (m < 60) "${m} 分钟" else "${m/60} 小时 ${m%60} 分钟" }
 
-    fun onFix(lat: Double, lng: Double, stamp: Long, wall: Long, accuracy: Double, kmh: Double) {
+    fun onFix(lat: Double, lng: Double, stamp: Long, wall: Long, accuracy: Double, kmh: Double,
+              receivedMonotonic: Long = android.os.SystemClock.elapsedRealtime(), source: String = "navigation_gcj02", rawLogged: Boolean = false) {
+        if (!rawLogged) ContinuousImuRecorder.recordGpsFix(lat, lng, kmh, accuracy, stamp, wall, receivedMonotonic, source)
         EmergencyAlertController.onFix(lat, lng, stamp, wall, accuracy, kmh)
         work {
         val req = request ?: return@work

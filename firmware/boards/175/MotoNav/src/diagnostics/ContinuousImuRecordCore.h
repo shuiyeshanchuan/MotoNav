@@ -6,7 +6,7 @@
 #include <math.h>
 
 // Record-only telemetry. No thresholds, calibration or accident decisions live
-// here. The main-loop reader supplies real samples; missed slots are not filled.
+// here. The consumer supplies real timestamped samples; missed slots are not filled.
 namespace ContinuousImu {
 
 static constexpr uint32_t SAMPLE_CAPACITY = 4096;
@@ -123,7 +123,8 @@ public:
     return true;
   }
 
-  void readError() { if (active_) ++readErrors_; }
+  void readError(uint32_t count = 1) { if (active_) readErrors_ += count; }
+  void acquisitionOverflow(uint32_t count) { if (active_) overflow_ += count; }
   void setSensorHealthy(bool healthy) {
     if (healthy != sensorHealthy_ && session_) statusPending_ = true;
     sensorHealthy_ = healthy;

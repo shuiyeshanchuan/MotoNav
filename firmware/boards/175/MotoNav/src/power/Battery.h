@@ -38,6 +38,7 @@ bool powerAllowsOta() {
 }
 
 int pmuRead(uint8_t reg) {
+  SharedWireGuard lock;
   Wire.beginTransmission(PMU_ADDR);
   Wire.write(reg);
   if (Wire.endTransmission(false) != 0) return -1;
@@ -47,6 +48,7 @@ int pmuRead(uint8_t reg) {
 void pmuSetBit(uint8_t reg, uint8_t bit) {
   int v = pmuRead(reg);
   if (v < 0 || (v & (1 << bit))) return;
+  SharedWireGuard lock;
   Wire.beginTransmission(PMU_ADDR);
   Wire.write(reg);
   Wire.write((uint8_t)(v | (1 << bit)));

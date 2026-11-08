@@ -18,11 +18,15 @@ void idlePowerOffShutdown() {
   if (chip == 0x4A) {
     const int config = pmuRead(0x10);
     if (config >= 0) {
-      Wire.beginTransmission(PMU_ADDR);
-      Wire.write(0x10);
-      // Bit 1 is a separate, self-clearing RESET command; never replay it.
-      Wire.write((uint8_t)((config & ~0x02) | 0x01));
-      const int result = Wire.endTransmission();
+      int result;
+      {
+        SharedWireGuard lock;
+        Wire.beginTransmission(PMU_ADDR);
+        Wire.write(0x10);
+        // Bit 1 is a separate, self-clearing RESET command; never replay it.
+        Wire.write((uint8_t)((config & ~0x02) | 0x01));
+        result = Wire.endTransmission();
+      }
       Serial.printf("Shutdown: PMIC command result=%d\n", result);
       delay(1000);
     }

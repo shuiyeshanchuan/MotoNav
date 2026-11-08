@@ -180,7 +180,7 @@ import java.util.Locale
  *   v8.3.64  行驶信息增加安装姿态校准，两端共用圆屏保存的静态相对倾斜基准。
  *   v8.3.65  修复测试 OTA 候选被旧系列稳定固件覆盖，增加发布可见性核验。
  */
-const val APP_VERSION = "v8.3.67"
+const val APP_VERSION = "v8.3.68"
 
 class MainActivity : AppCompatActivity() {
     private val BG = NavStyle.BG

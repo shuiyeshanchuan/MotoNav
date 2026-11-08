@@ -64,6 +64,11 @@ object EmergencyAlertController {
     private var sentResults = IntArray(0)
     private var deliveryResults = IntArray(0)
     private var activeSince = 0L
+    private var gpsGateAt = -1L
+    private var imuGateAt = -1L
+    private data class TraceState(var value: String, var observedAt: Long, var fields: Map<String, String> = emptyMap(), var emittedAt: Long = -1,
+        var changes: Int = 1, var emitted: Boolean = false)
+    private val traceStates = linkedMapOf<String, TraceState>() // Four fixed state keys, never per-sample history.
     private data class Fix(val lat: Double, val lng: Double, val accuracy: Double, val fixAt: Long, val wall: Long)
 
     @Volatile var status = "急刹测试未开启"; private set
@@ -95,6 +100,7 @@ object EmergencyAlertController {
                 if (stateName == "INTERRUPTED") {
                     status = "上次报警流程因进程/手机重启中断，未自动补发短信"
                     persist()
+                    audit("alert_interrupted", eventToken, "reason" to "process_restart", "state" to stateName)
                 } else status = stateText(stateName)
             }
         }.onFailure { storageReady = false; storageError = "报警设置/记录读取失败：${it.message}；已关闭短信发送"; status = storageError }
@@ -109,6 +115,14 @@ object EmergencyAlertController {
             override fun onActivityDestroyed(a: Activity) {}
         })
         ContinuousImuRecorder.liveBatchObserver = { batch, received -> onBatch(batch, received) }
+        runCatching { ContinuousImuRecorder.recordDetectorConfiguration(mapOf(
+            "dynamic_threshold_mps2" to BrakeTestDetector.DYNAMIC_THRESHOLD_MPS2.toString(),
+            "dynamic_duration_ms" to BrakeTestDetector.DYNAMIC_DURATION_MS.toString(),
+            "max_gps_window_ms" to BrakeTestDetector.MAX_GPS_WINDOW_MS.toString(),
+            "max_imu_age_ms" to BrakeTestDetector.MAX_IMU_AGE_MS.toString(),
+            "max_gps_age_ms" to BrakeTestDetector.MAX_GPS_AGE_MS.toString(),
+            "evidence_window_ms" to BrakeTestDetector.EVIDENCE_WINDOW_MS.toString())) }
+        detectorTrace(force = true)
         main.post(tick)
     }
 
@@ -140,18 +154,23 @@ object EmergencyAlertController {
     }
 
     fun arm(): String {
+        audit("arm", "state" to "requested", "navigation" to navigation, "simulation" to simulation)
         if (busy()) return "报警流程正在进行"
         readiness(saved.realSms)?.let { return it }
         if (saved.name.isBlank() || saved.phone.isBlank()) return "请先保存姓名和紧急联系人"
         if (!BleLink.isConnected || !BleLink.verified || !BleLink.supportsEmergencyAlarm || !BleLink.supportsContinuousImu) return "请连接支持急刹测试的 nav.14 圆屏固件"
         wantedArm = true
         if (navigation && !simulation) detector.arm(now(), true, false)
+        audit("arm", "state" to "enabled", "navigation" to navigation, "simulation" to simulation)
+        detectorTrace(force = true)
         status = if (navigation && !simulation) "急刹测试已开启，等待新鲜 IMU 和定位" else "已开启单次急刹测试，开始真实导航后生效"
         return status
     }
 
     fun disarm(): String {
+        audit("disarm", "armed" to armed, "state" to stateName)
         wantedArm = false; detector.disarm()
+        detectorTrace(force = true)
         if (stateName == "COUNTDOWN") return cancel(eventToken)
         if (eventToken != 0L) return "已停止后续触发；当前事件结果请查看，已进入短信处理阶段的消息不能撤回"
         status = "急刹测试已关闭"; return status
@@ -172,56 +191,97 @@ object EmergencyAlertController {
     fun navigationStarted(mode: String, simulated: Boolean) {
         if (Looper.myLooper() != Looper.getMainLooper()) { main.post { navigationStarted(mode, simulated) }; return }
         navigation = mode == "导航" || mode == "网页摩托车"; simulation = simulated
+        gpsGateAt = -1
         resetLive()
         if (wantedArm && navigation && !simulation) detector.arm(now(), true, false)
         else detector.disarm()
+        audit("navigation_started", "mode" to mode, "navigation" to navigation, "simulation" to simulation, "armed" to armed)
+        gateState("gps_gate", "no_fix", force = true)
+        gateState("imu_gate", "waiting_for_live_data", force = true)
+        detectorTrace(force = true)
     }
     fun navigationStopped() {
         if (Looper.myLooper() != Looper.getMainLooper()) { main.post { navigationStopped() }; return }
         navigation = false; detector.disarm()
+        audit("navigation_stopped", "state" to stateName, "armed" to armed)
+        gateState("gps_gate", "navigation_inactive", force = true)
+        gateState("imu_gate", "navigation_inactive", force = true)
+        detectorTrace(force = true)
         // Ending navigation is not the rider's explicit safety confirmation.
     }
     fun serviceStopped() {
         wantedArm = false; detector.disarm()
+        detectorTrace(force = true)
         if (stateName == "COUNTDOWN") {
             model = model?.restoreInterrupted(); stateName = "INTERRUPTED"; status = "后台服务关闭，报警流程中断，未发短信"
             runCatching { persist() }; publish()
+            audit("alert_interrupted", eventToken, "reason" to "service_stopped", "state" to stateName)
         }
     }
     fun onLinkDisconnected() {
         if (Looper.myLooper() != Looper.getMainLooper()) { main.post { onLinkDisconnected() }; return }
         resetLive(); detector.onLinkInterrupted()
+        gateState("link_state", "disconnected", force = true)
+        gateState("imu_gate", "link_disconnected", force = true)
+        detectorTrace(force = true)
     }
-    private fun resetLive() { lastBoardBoot = -1; lastBoardNow = -1; minimumOffset = Long.MAX_VALUE; lastSampleSeq = -1; liveSince = now() }
+    private fun resetLive() { lastBoardBoot = -1; lastBoardNow = -1; minimumOffset = Long.MAX_VALUE; lastSampleSeq = -1; liveSince = now(); imuGateAt = -1 }
 
     fun onFix(lat: Double, lng: Double, fixWall: Long, receivedWall: Long, accuracy: Double, speedKmh: Double) {
         if (Looper.myLooper() != Looper.getMainLooper()) { main.post { onFix(lat, lng, fixWall, receivedWall, accuracy, speedKmh) }; return }
         val received = now(); val age = receivedWall - fixWall
+        val fixTrace = mapOf("fix_wall_ms" to fixWall.toString(), "received_wall_ms" to receivedWall.toString(),
+            "fix_monotonic_ms" to (received - age).toString(), "received_monotonic_ms" to received.toString(),
+            "age_ms" to age.toString(), "accuracy_m" to accuracy.toString(), "speed_kmh" to speedKmh.toString())
         if (age !in 0..1500 || !lat.isFinite() || !lng.isFinite() || lat !in -90.0..90.0 || lng !in -180.0..180.0 ||
             lat == 0.0 && lng == 0.0 || !accuracy.isFinite() || accuracy <= 0 || accuracy > 100) {
-            detector.invalidateGps(); return
+            gpsGateAt = -1; gateState("gps_gate", "invalid_or_stale", fields = fixTrace)
+            detector.invalidateGps(); detectorTrace(); return
         }
         val acquired = received - age
+        gpsGateAt = acquired
+        gateState("gps_gate", when {
+            !navigation -> "navigation_inactive"
+            simulation -> "simulation"
+            !detector.isArmed() -> "not_armed"
+            !speedKmh.isFinite() || speedKmh !in 0.0..250.0 || accuracy > 30 -> "invalid_speed_or_accuracy"
+            else -> "fresh_real_fix"
+        }, fields = fixTrace)
         if (navigation && !simulation) lastFix = Fix(lat, lng, accuracy, acquired, fixWall)
         if (navigation && !simulation && detector.isArmed()) {
             detector.onGps(acquired, received, speedKmh, accuracy, true)?.let { trigger(it) }
         }
+        detectorTrace()
     }
 
     private fun onBatch(batch: ContinuousImuProtocol.Batch, received: Long) {
-        if (!navigation || simulation || !detector.isArmed()) return
+        if (!navigation || simulation || !detector.isArmed()) {
+            gateState("imu_gate", if (!navigation) "navigation_inactive" else if (simulation) "simulation" else "not_armed")
+            return
+        }
         if (batch.boot != lastBoardBoot) {
             resetLive(); lastBoardBoot = batch.boot; boardClock = batch.boardNow; lastBoardNow = batch.boardNow
             detector.onLinkInterrupted()
         } else {
             val delta = (batch.boardNow - lastBoardNow) and 0xffffffffL
-            if (delta > 0x7fffffffL) return
+            if (delta > 0x7fffffffL) { gateState("imu_gate", "board_time_regression"); return }
             boardClock += delta; lastBoardNow = batch.boardNow
         }
         minimumOffset = minOf(minimumOffset, received - boardClock)
         val queueAge = boardClock + minimumOffset
         val live = received - queueAge <= 500 && received - liveSince >= 2000 &&
             batch.nextSeq == batch.firstSeq + batch.samples.size && batch.flags and 13 == 1
+        imuGateAt = received
+        gateState("imu_gate", when {
+            batch.flags and 12 != 0 -> "sensor_or_buffer_unavailable"
+            batch.flags and 1 == 0 -> "board_not_sampling"
+            received - liveSince < 2000 -> "reconnect_warmup"
+            batch.nextSeq != batch.firstSeq + batch.samples.size -> "buffered_backlog"
+            received - queueAge > 500 -> "transport_delayed"
+            batch.samples.isEmpty() -> "no_new_sample"
+            batch.samples.all { ((batch.boardNow - it.timestamp) and 0xffffffffL) > 500 } -> "sample_stale"
+            else -> "fresh_live_samples"
+        })
         batch.samples.forEachIndexed { index, sample ->
             val seq = batch.firstSeq + index
             if (seq <= lastSampleSeq) return@forEachIndexed
@@ -230,6 +290,7 @@ object EmergencyAlertController {
             val acquired = boardClock + minimumOffset - age
             detector.onImu(acquired, received, sample.ax.toDouble(), sample.ay.toDouble(), sample.az.toDouble(),
                 sample.gx.toDouble(), sample.gy.toDouble(), sample.gz.toDouble(), live && age <= 500, batch.flags and 12 == 0)?.let { trigger(it) }
+            detectorTrace()
         }
     }
     private fun trigger(trigger: BrakeTestDetector.Trigger) {
@@ -243,6 +304,7 @@ object EmergencyAlertController {
     private fun startAlert(source: String, trigger: BrakeTestDetector.Trigger?) {
         readiness(saved.realSms)?.let { error(it) }
         wantedArm = false; detector.disarm()
+        detectorTrace(force = true)
         val epoch = (System.currentTimeMillis() / 1000) and 0xffffffffL
         val token = maxOf((sequence + 1) and 0xffffffffL, epoch).coerceAtLeast(1)
         write("config.json", configJson(saved).put("sequence", token)); sequence = token
@@ -255,6 +317,14 @@ object EmergencyAlertController {
         trigger?.let { event!!.put("dynamicMps2", it.dynamicAccelerationMps2).put("speedDropKmh", it.speedDropKmh)
             .put("decelerationMps2", it.decelerationMps2) }
         persist() // A failure here never reaches SMS submission.
+        audit("alert_started", token, "source" to source, "state" to stateName, "seconds" to saved.seconds,
+            "real_sms" to eventConfig.realSms, "start_monotonic_ms" to initial.startMonotonicMs,
+            "deadline_monotonic_ms" to initial.deadlineMonotonicMs)
+        trigger?.let {
+            audit("detector_triggered", token, "state" to "TRIGGERED", "reason" to "triggered_manual_rearm_required",
+                "dynamic_mps2" to it.dynamicAccelerationMps2, "speed_drop_kmh" to it.speedDropKmh,
+                "deceleration_mps2" to it.decelerationMps2, "imu_at_ms" to it.imuAtMs, "gps_at_ms" to it.gpsAtMs)
+        }
         status = "急刹测试倒计时；长按确认平安可取消"
         wire()
         sendPrompt()
@@ -271,6 +341,7 @@ object EmergencyAlertController {
         model = model?.restoreInterrupted()
         stateName = "INTERRUPTED"; status = "$message；未继续发短信"
         runCatching { persist() }; publish(); wire()
+        audit("alert_interrupted", eventToken, "reason" to "start_or_persist_failed", "state" to stateName)
         return status
     }
 
@@ -289,6 +360,7 @@ object EmergencyAlertController {
         val next = model!!.cancel(hex(token))
         return try {
             model = next; stateName = "CANCELLED"; remainingSeconds = 0; status = "已确认平安，报警已取消，未发短信"
+            audit("alert_cancelled", token, "state" to stateName)
             persist(); publish(); wire(); status
         } catch (e: Exception) {
             // Cancellation remains in memory even if durable storage failed.
@@ -302,9 +374,11 @@ object EmergencyAlertController {
         val next = model!!.claimSend(hex(eventToken), now(), false)
         if (next.phase != EmergencyAlertState.Phase.SEND_CLAIMED) return
         model = next
+        audit("alert_expired", eventToken, "real_sms" to eventConfig.realSms, "state" to "SEND_CLAIMED")
         if (!eventConfig.realSms) {
             stateName = "DRY_RUN"; status = "演练完成：倒计时已结束，本次未发送短信"
-            model = next.sent(hex(eventToken)); persist(); publish(); wire(); return
+            model = next.sent(hex(eventToken)); persist(); publish(); wire()
+            audit("alert_dry_run", eventToken, "state" to stateName); return
         }
         try {
             readiness(true)?.let { error(it) }
@@ -314,11 +388,14 @@ object EmergencyAlertController {
             event!!.put("sms", body).put("submitWallMs", System.currentTimeMillis())
             activeSince = now()
             persist() // Irreversible claim is durable BEFORE invoking the modem API.
+            audit("sms_submit_claimed", eventToken, "state" to stateName, "total" to parts.size)
             publish(); wire()
             EmergencySmsSender.send(context, eventToken, eventConfig.subscriptionId, eventConfig.phone, parts)
+            audit("sms_api_submitted", eventToken, "state" to stateName, "total" to parts.size)
         } catch (e: Exception) {
             stateName = "FAILED"; model = model!!.failed(hex(eventToken)); status = "短信发送失败：${e.message}；未自动重试"
             event?.put("error", e.message); runCatching { persist() }; publish(); wire()
+            audit("alert_failed", eventToken, "reason" to "sms_submission_failed", "state" to stateName)
         }
     }
 
@@ -333,6 +410,7 @@ object EmergencyAlertController {
         val sent = if (current) sentResults else decodeResults(record.optJSONArray("sentResults"))
         val delivered = if (current) deliveryResults else decodeResults(record.optJSONArray("deliveryResults"))
         if (sent.size != total || delivered.size != total) return
+        val repeatedUnverified = delivery && result == Int.MAX_VALUE && record.has("unverifiedDeliveryReportWallMs")
         if (delivery && result == Int.MAX_VALUE) {
             record.put("unverifiedDeliveryReportWallMs", System.currentTimeMillis())
         } else {
@@ -358,6 +436,8 @@ object EmergencyAlertController {
         }
         record.put("sentResults", JSONArray(sent.toList())).put("deliveryResults", JSONArray(delivered.toList()))
             .put("state", nextState).put("status", message).put("updatedWallMs", System.currentTimeMillis())
+        if (!repeatedUnverified) audit("sms_result", token, "part" to part, "total" to total, "delivery" to delivery,
+            "result" to result, "previous_state" to previousState, "state" to nextState)
         if (current) {
             stateName = nextState; status = message
             if (stateName == "SUBMITTED" || stateName == "DELIVERED") model = model?.sent(hex(token))
@@ -383,8 +463,16 @@ object EmergencyAlertController {
         override fun run() {
             val ready = BleLink.isConnected && BleLink.verified
             if (!ready && linkReady) onLinkDisconnected()
-            if (ready && !linkReady && eventToken != 0L) { wire(); sendPrompt() }
+            if (ready && !linkReady) {
+                gateState("link_state", "connected", force = true)
+                if (eventToken != 0L) { wire(); sendPrompt() }
+            }
             linkReady = ready
+            if (navigation && !simulation && detector.isArmed()) {
+                if (gpsGateAt >= 0 && now() - gpsGateAt > BrakeTestDetector.MAX_GPS_AGE_MS) gateState("gps_gate", "stale")
+                if (imuGateAt >= 0 && now() - imuGateAt > BrakeTestDetector.MAX_IMU_AGE_MS) gateState("imu_gate", "stale")
+            }
+            flushTraceStates()
             if (stateName == "COUNTDOWN") {
                 remainingSeconds = ceil(model!!.remainingMs(now()) / 1000.0).toInt()
                 if (model!!.isExpired(now())) guardedExpire(eventToken)
@@ -392,8 +480,38 @@ object EmergencyAlertController {
             } else if (stateName == "SENDING" && now() - activeSince > 60000) {
                 stateName = "UNKNOWN"; status = "未收到完整发送结果，短信状态未知；未自动重试"
                 runCatching { persist() }; publish(); wire()
+                audit("sms_result_timeout", eventToken, "state" to stateName)
             }
             main.postDelayed(this, 100)
+        }
+    }
+
+    /** Privacy-safe journal mirroring is best effort and cannot alter cancellation/SMS behavior. */
+    private fun audit(kind: String, vararg fields: Pair<String, Any>) = audit(kind, 0L, *fields)
+    private fun audit(kind: String, token: Long, vararg fields: Pair<String, Any>) {
+        auditFields(kind, token, fields.associate { it.first to it.second.toString() })
+    }
+    private fun auditFields(kind: String, token: Long, fields: Map<String, String>) {
+        runCatching { ContinuousImuRecorder.recordEmergencyEvent(kind, token, fields) }
+    }
+    private fun detectorTrace(force: Boolean = false) = gateState("detector_state", "${detector.state().name}:${detector.status()}", force)
+    private fun gateState(kind: String, value: String, force: Boolean = false, fields: Map<String, String> = emptyMap()) {
+        val at = now()
+        val state = traceStates[kind]
+        if (state == null) traceStates[kind] = TraceState(value, at, fields)
+        else if (state.value != value) { state.value = value; state.observedAt = at; state.fields = fields; state.changes++ }
+        val current = traceStates.getValue(kind)
+        if (current.changes > 0 && (force || !current.emitted || at - current.emittedAt >= 1000)) emitTraceState(kind, current, at)
+    }
+    private fun emitTraceState(kind: String, state: TraceState, at: Long) {
+        auditFields(kind, 0L, state.fields + mapOf("state" to state.value, "observed_monotonic_ms" to state.observedAt.toString(),
+            "coalesced_changes" to state.changes.toString()))
+        state.changes = 0; state.emitted = true; state.emittedAt = at
+    }
+    private fun flushTraceStates() {
+        val at = now()
+        traceStates.forEach { (kind, state) ->
+            if (state.changes > 0 && at - state.emittedAt >= 1000) emitTraceState(kind, state, at)
         }
     }
 

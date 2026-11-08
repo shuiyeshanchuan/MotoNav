@@ -15,6 +15,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.util.Locale;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 import java.util.zip.CRC32;
 import org.json.JSONObject;
 
@@ -29,6 +32,10 @@ public final class EmergencyIntegrationTest {
         return c().save(new EmergencyConfig("测试骑手","13800138000","测试提示",seconds,7,realSms));
     }
     private static void cleanEvent() { if(c().getStateName().equals("COUNTDOWN")) c().cancel(c().getEventToken()); }
+    private static List<ContinuousImuRecorder.Event> logged(String kind) {
+        return ContinuousImuRecorder.journal.stream().filter(e->e.kind.equals(kind)).collect(Collectors.toList());
+    }
+    private static long logged(String kind,long token) {return logged(kind).stream().filter(e->e.token==token).count();}
     private static void cancelFlow() {
         check(save(30,true)==null,"save real SMS configuration");
         check(c().startDrill().contains("演练已启动"),"start drill");long token=c().getEventToken();
@@ -201,6 +208,7 @@ public final class EmergencyIntegrationTest {
         for(int i=0;i<100;i++)raw(0,false);gps(36);for(int i=0;i<8;i++)raw(4,false);gps(20);
         check(c().getEventToken()!=oldToken&&c().getStateName().equals("COUNTDOWN"),"actual controller raw IMU plus real GPS reaches countdown");
         check(report(c().getEventToken()).getString("source").equals("imu_gps_brake"),"sensor trigger distinguished from manual drill");
+        check(logged("detector_triggered",c().getEventToken())==1,"real detector trigger is logged once with allocated event token");
         c().onBoardCancel(c().getEventToken());check(c().getStateName().equals("CANCELLED")&&!c().getArmed(),"sensor event single-use and board-cancellable");
     }
     private static void promptCache() {
@@ -214,6 +222,54 @@ public final class EmergencyIntegrationTest {
         check(!BleLink.visibleImages.containsKey(15)&&BleLink.retainedImages.get(15).w==0,"reconnect retained replay cannot restore old second slice");
         check(new String(BleLink.visibleImages.get(14).bytes,java.nio.charset.StandardCharsets.UTF_8).equals("短提示"),"reconnect still displays current first slice");c().cancel(c().getEventToken());
     }
+    private static void eventJournal() {
+        cleanEvent();ContinuousImuRecorder.journal.clear();SmsManager.submissions.clear();
+        check(ContinuousImuRecorder.configuration.get("dynamic_threshold_mps2").equals("2.5")&&ContinuousImuRecorder.configuration.get("dynamic_duration_ms").equals("120"),"journal configuration mirrors actual detector constants");
+        check(save(30,false)==null,"journal dry config");c().navigationStarted("导航",false);c().arm();
+        check(logged("navigation_started").size()==1&&logged("arm").stream().anyMatch(e->"enabled".equals(e.fields.get("state"))),"navigation and explicit arm are journaled");
+        sequence=0;for(int i=0;i<100;i++)raw(0,false);gps(30);
+        check(logged("imu_gate").stream().anyMatch(e->"fresh_live_samples".equals(e.fields.get("state"))),"fresh IMU gate transition retained");
+        check(logged("gps_gate").stream().anyMatch(e->"fresh_real_fix".equals(e.fields.get("state"))),"fresh GPS gate transition retained");
+        Handler.advance(1600);
+        check(logged("gps_gate").stream().anyMatch(e->"stale".equals(e.fields.get("state"))),"GPS age expiration logged without another location callback");
+        check(logged("imu_gate").stream().anyMatch(e->"stale".equals(e.fields.get("state"))),"IMU timeout gate logged without another batch");
+        long gateStart=SystemClock.now;int gateBefore=logged("gps_gate").size();
+        for(int i=0;i<1000;i++){long wall=System.currentTimeMillis();c().onFix(0,0,wall,wall,5,0);}
+        Handler.advance(1000);
+        check(logged("gps_gate").size()-gateBefore<=2,"1000 identical rejected fixes cannot create per-sample journal spam");
+        check(logged("gps_gate").stream().anyMatch(e->"invalid_or_stale".equals(e.fields.get("state"))&&e.at>=gateStart),"rejected GPS reason eventually journaled");
+        long staleReceived=System.currentTimeMillis(),staleFix=staleReceived-2000,staleMono=SystemClock.now;
+        gps(30);Handler.advance(1000);c().onFix(31.2,121.5,staleFix,staleReceived,5,0);Handler.advance(1000);
+        ContinuousImuRecorder.Event rejected=logged("gps_gate").stream().filter(e->"invalid_or_stale".equals(e.fields.get("state"))).reduce((a,b)->b).orElseThrow();
+        check(rejected.fields.get("fix_wall_ms").equals(Long.toString(staleFix))&&rejected.fields.get("received_wall_ms").equals(Long.toString(staleReceived))&&rejected.fields.get("age_ms").equals("2000"),"rejected stale GPS preserves supplied acquisition and receive wall times");
+        check(rejected.fields.get("fix_monotonic_ms").equals(Long.toString(staleMono+1000-2000))&&rejected.fields.get("received_monotonic_ms").equals(Long.toString(staleMono+1000)),"rejected GPS monotonic acquisition uses fix age rather than receipt time");
+        gateBefore=logged("gps_gate").size();
+        for(int i=0;i<1000;i++){long wall=System.currentTimeMillis();c().onFix(i%2==0?31.2:0,i%2==0?121.5:0,wall,wall,5,0);}
+        Handler.advance(1000);
+        check(logged("gps_gate").size()-gateBefore<=2,"1000 alternating gate changes are coalesced instead of journaled per fix");
+        check(logged("gps_gate").stream().anyMatch(e->Integer.parseInt(e.fields.getOrDefault("coalesced_changes","0"))>100),"coalescing preserves a count of suppressed state transitions");
+        BleLink.connected=false;Handler.advance(100);BleLink.connected=true;Handler.advance(100);
+        check(logged("link_state").stream().anyMatch(e->"disconnected".equals(e.fields.get("state")))&&logged("link_state").stream().anyMatch(e->"connected".equals(e.fields.get("state"))),"disconnect/reconnect states journaled");
+        c().startDrill();long cancelled=c().getEventToken();c().navigationStopped();c().onBoardCancel(cancelled);c().cancel(cancelled);
+        check(logged("alert_started",cancelled)==1&&logged("alert_cancelled",cancelled)==1,"navigation end keeps token and duplicate cancel creates only one cancellation event");
+        check(logged("navigation_stopped").size()==1,"navigation stop journaled without cancelling countdown");
+        check(save(1,false)==null,"journal expiry config");c().startDrill();long dry=c().getEventToken();Handler.advance(1100);
+        check(logged("alert_expired",dry)==1&&logged("alert_dry_run",dry)==1&&SmsManager.submissions.isEmpty(),"dry expiry journaled once without SMS");
+        SmsManager.Submission s=submit(0,7);long sent=c().getEventToken();int total=s.parts.size();
+        check(logged("sms_submit_claimed",sent)==1&&logged("sms_api_submitted",sent)==1,"durable claim and modem invocation distinguish submission steps");
+        for(PendingIntent p:s.sent)p.dispatch(Activity.RESULT_OK);long callbacks=logged("sms_result",sent);
+        s.sent.get(0).dispatch(Activity.RESULT_OK);check(logged("sms_result",sent)==callbacks,"duplicate sent callback creates no false new result event");
+        check(save(30,false)==null,"journal new event config");c().startDrill();long newer=c().getEventToken();
+        for(PendingIntent p:s.delivered)p.dispatch(Activity.RESULT_OK,new byte[]{0},"3gpp");
+        check(logged("sms_result",sent)==total*2L&&logged("sms_result",newer)==0,"late multipart reports preserve original token after a newer alert");
+        c().cancel(newer);c().disarm();check(!logged("disarm").isEmpty(),"explicit disarm journaled");
+        check(save(1,false)==null,"journal failure isolation config");ContinuousImuRecorder.failJournal=true;
+        c().startDrill();long isolated=c().getEventToken();c().cancel(isolated);Handler.advance(1000);ContinuousImuRecorder.failJournal=false;
+        check(c().getStateName().equals("CANCELLED"),"logging exception cannot break cancellation or cause sending");
+        for(ContinuousImuRecorder.Event e:ContinuousImuRecorder.journal)for(Map.Entry<String,String> field:e.fields.entrySet()) {
+            String value=field.getValue();check(!value.contains("13800138000")&&!value.contains("测试骑手")&&!value.contains("测试提示")&&!value.contains("uri.amap.com"),"event fields exclude contact, prompt, SMS and position: "+e.kind+"/"+field.getKey());
+        }
+    }
     private static void seed(String mode) {
         check(save(mode.equals("countdown")?30:0,true)==null,"persist restart config");c().startDrill();
         if(!mode.equals("countdown"))Handler.advance(0);
@@ -223,6 +279,7 @@ public final class EmergencyIntegrationTest {
     private static void restarted(String mode) {
         check(c().getStateName().equals(mode.equals("submitted")?"SUBMITTED":"INTERRUPTED"),"restart preserves terminal or interrupts active state "+mode);
         Handler.advance(180000);check(SmsManager.submissions.isEmpty(),"process restart cannot submit or retry historical SMS "+mode);
+        check(logged("alert_interrupted",c().getEventToken())==(mode.equals("submitted")?0:1),"restart interruption is logged once with historical token "+mode);
     }
     public static void main(String[] args) throws Exception {
         String mode=args.length>1?args[1]:"normal";
@@ -238,7 +295,7 @@ public final class EmergencyIntegrationTest {
             check(c().getStatus().contains("存储")||c().getStatus().contains("读取失败"),"initialization failure exposed without crashing application");
             check(save(0,true)!=null&&c().readiness(true)!=null,"failed storage blocks save and sending readiness");
             check(!c().startDrill().contains("演练已启动"),"failed storage cannot start an alert");Handler.advance(120000);check(SmsManager.submissions.isEmpty(),"failed storage no background SMS");
-        } else {cancelFlow();dryRun();realSms();permissionAndSim();navAndBoardCancel();duplicateResults();countdownsAndHistory();deliveryPdu();failures();sensorToCountdown();promptCache();}
+        } else {cancelFlow();dryRun();realSms();permissionAndSim();navAndBoardCancel();duplicateResults();countdownsAndHistory();deliveryPdu();failures();sensorToCountdown();promptCache();eventJournal();}
         System.out.println("Emergency Android integration: "+checks+" controller/SMS substitute checks passed; no modem/network used");
     }
 }

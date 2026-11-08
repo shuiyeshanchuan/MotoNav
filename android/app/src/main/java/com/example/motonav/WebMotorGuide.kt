@@ -85,7 +85,13 @@ object WebMotorGuide {
                     interval = 1000L; isNeedAddress = false; isLocationCacheEnable = false
                     isOffset = true
                 })
-                client.setLocationListener { fix -> main.post {
+                client.setLocationListener { fix ->
+                    val receivedMono = SystemClock.elapsedRealtime()
+                    val receivedWall = System.currentTimeMillis()
+                    if (fix != null && fix.errorCode == 0) ContinuousImuRecorder.recordGpsFix(fix.latitude,fix.longitude,
+                        fix.speed.toDouble()*3.6,fix.accuracy.toDouble(),fix.time,receivedWall,receivedMono,
+                        if (fix.coordType.equals("GCJ02",true)) "web_amap_location_gcj02" else "web_amap_location_unknown_coords")
+                    main.post {
                     if (!active || generation != epoch) return@post
                     if (fix == null || fix.errorCode != 0) { status = "定位失败：${fix?.errorInfo ?: "无数据"}"; return@post }
                     val age = System.currentTimeMillis() - fix.time
@@ -128,6 +134,8 @@ object WebMotorGuide {
     private fun offer(la: Double, lo: Double, accuracy: Double, mps: Double, heading: Float, wall: Long) {
         if (!active) return
         val track = tracker ?: return
+        if (simulation) ContinuousImuRecorder.recordGpsFix(la,lo,mps*3.6,accuracy,wall,System.currentTimeMillis(),
+            SystemClock.elapsedRealtime(),"web_simulation_gcj02")
         // Hold the same pose for route matching and distance while parked; raw GPS drift must not advance turns.
         val parked = !simulation && !lat.isNaN() && mps * 3.6 < 2.0
         val matchLat = if (parked) lat else la
@@ -145,7 +153,8 @@ object WebMotorGuide {
             if (d<300) tripM+=d
         }
         lastLat=matchLat; lastLng=matchLng; progress=result.progress
-        if (!simulation) RideRecorder.onFix(la,lo,wall,System.currentTimeMillis(),accuracy,speed.toDouble())
+        if (!simulation) RideRecorder.onFix(la,lo,wall,System.currentTimeMillis(),accuracy,mps*3.6,
+            source="web_amap_location_gcj02",rawLogged=true)
         Brightness.updateLocation(la,lo)
         MapFeeder.onLocation(la,lo,heading,speed,accuracy.toFloat())
         val r=route ?: return

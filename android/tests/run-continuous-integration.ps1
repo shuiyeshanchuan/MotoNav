@@ -22,3 +22,7 @@ foreach ($taskMode in @('normal', 'reopen', 'interruptions', 'fault-reopen')) {
     & $taskJava '-Xmx64m' -cp $taskRuntimeClasspath com.example.motonav.ContinuousImuRecorderIntegrationTest $taskFixture $taskMode
     if ($LASTEXITCODE -ne 0) { throw "Actual Kotlin recorder integration failed: $taskMode" }
 }
+foreach ($taskMode in @('journey', 'journey-reopen')) {
+    & $taskJava '-Xmx64m' -cp $taskRuntimeClasspath com.example.motonav.ContinuousImuRecorderIntegrationTest (Join-Path $taskFixture 'journey') $taskMode
+    if ($LASTEXITCODE -ne 0) { throw "Actual Kotlin journey integration failed: $taskMode" }
+}

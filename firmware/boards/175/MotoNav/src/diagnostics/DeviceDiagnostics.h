@@ -30,6 +30,8 @@ void queueDeviceInfo() {
       String(MOTONAV_PROTOCOL_VERSION) + "," + String(MOTONAV_OTA_PARTITION) + "," +
       String(MOTONAV_OTA_READY) + "," + String(MOTONAV_FLASH_MB) + "," +
       String(LCD_WIDTH) + "," + String(LCD_HEIGHT);
+  identityEpoch = mediaConnectionEpoch;
+  identityTransfer.begin(pendingDeviceInfo.c_str());
 }
 
 void queueDeviceSelfTest() {
@@ -45,9 +47,8 @@ void queueDeviceSelfTest() {
       String(vbusMv) + "," + String(powerAllowsOta() ? 1 : 0);
 }
 
-// Keep OTA status packets below the 20-byte BLE fallback MTU used by older
-// Android connections. INFO and SELFTEST remain useful diagnostics, but can
-// be truncated before MTU negotiation completes.
+// OC/OP fit the fallback MTU. Legacy FW/INFO may be truncated there; the
+// bounded binary INFO response above carries a full CRC-checked identity.
 void queueOtaStatus() {
   pendingOtaCapabilities = String("OC,") + String(OTA_PROTOCOL_VERSION) + "," +
       String(MOTONAV_OTA_READY);

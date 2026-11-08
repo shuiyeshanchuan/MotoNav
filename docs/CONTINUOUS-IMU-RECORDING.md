@@ -4,8 +4,8 @@
 
 ## 现有工程与最小修改
 
-1. 1.75C 使用 `firmware/boards/175/MotoNav`。SensorLib 的 `ImuDrv.hpp` → QMI8658 驱动已有六轴读取；诊断配置传入 112.0 Hz，映射到硬件约 112.1 Hz。保留现有量程、ODR、滤波、自检、主循环 I²C 所有权与安装校准。没有外接存储，不能假设存在 TF 卡。
-2. `ImuDiagnostics.h` 每次成功读取后向独立记录器提供真实新样本。新模块每 40 ms 调度接纳一条，目标 25 Hz；不重复旧快照凑采样率。地图刷新、主循环和同步切页动画仍可能延迟采样，记录时间与 missedSlots 揭示这一限制。这不是硬件 FIFO 全量采集，也不保证保留冲击峰值。
+1. 1.75C 使用 `firmware/boards/175/MotoNav`。SensorLib 的 `ImuDrv.hpp` → QMI8658 驱动已有六轴读取；诊断配置传入 112.0 Hz，映射到硬件约 112.1 Hz。保留现有量程、ODR、滤波、自检与安装校准。nav15起由独立任务独占传感器读取，与触摸/PMU的完整I²C事务互斥；主循环消费有界队列，独占健康聚合、安装参考/NVS和记录环。没有外接存储，不能假设存在 TF 卡。
+2. `ImuDiagnostics.h` 每次成功读取后向独立记录器提供真实新样本。每40 ms固定相位接纳一条，目标25 Hz，不重复旧快照。nav13/14读取共用显示主循环；11月8日实测15.17 Hz、39.33%计划时隙未采到。nav15独立任务5 ms轮询新数据，256×52 B原始事件队列（约2.28秒@112.1 Hz）隔离显示阻塞；超容量丢新事件并显式计数。这不是FIFO全量采集，仍需实测实际频率与冲击峰值完整性。
 3. 新增有限缓冲与批协议；`CommandReceiver.h` 在更新导航活跃时间之前分流二进制控制，采集 ACK 不延长旧导航数据的有效期。新协议复用配对后的普通 BLE RX/TX，不使用 OTA 特征。
 4. Android `RideRecorder.start/stop` 只增加生命周期转发。GPS 轨迹关闭或暂未定位仍可记录 IMU；原生 SDK、网页摩托车、分享路线使用现有开始/结束入口，重算不另开会话。旧 `AccidentRecordMonitor` 和四姿态采集保持独立。
 5. `ContinuousImuRecorder.kt` 使用独立单线程和 64 项有界工作队列，`ContinuousImuProtocol.java` 负责有限分包解析，`ContinuousImuStore.java` 负责流式持久化。`BleLink.kt` 在 UTF-8 解析前分流新通知，不替换旧单 IMU listener。能力帧 `CAP,IMUR,1` 确认支持后才发送控制，旧固件不被当作支持。
@@ -17,6 +17,8 @@
 - 手机持久化确认前保留；满时覆盖最旧未确认样本，增加 overflow。分配失败、传感器不可用明确报告，不无限申请 RAM。
 - 每次启动使用新的非零 boot ID，每次导航使用新的非零 32 位 session ID。序号是本段实际记录数，不用“理论 25 Hz × 时长”冒充实际数量。
 - 主循环错过的 40 ms 槽位、读错、缓存覆盖与手机收到的序号缺口分别统计，不能简单相加为单一丢包数。
+
+nav15保留上述协议：`overflow`现在合计采集事件队列丢弃与记录环覆盖，可能与`missedSlots`、`gapSamples`重叠；不能相加或把gap=0视为采集完整。队列丢弃另有串口累计日志。额外队列对象在ESP32约13,328 B，任务栈4,096 B及RTOS开销；原128 KiB PSRAM记录环不变。任务/锁分配失败时明确关闭采集，不退回无互斥的并发读取。
 
 ## BLE 协议 v1
 
@@ -62,6 +64,25 @@ flags 位：1 采集中、2 已停止、4 IMU 不可用、8 缓冲分配失败�
 | 服务关闭、写盘失败、空间不足 | 保留已持久化记录、停止确认、尽力发 STOP；未确认尾部明确未知 |
 
 Android 系统限制依据：[BLE 后台通信](https://developer.android.com/develop/connectivity/bluetooth/ble/background)、[后台启动前台服务限制](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)。START_STICKY 不代表任意厂商/强停/重启情形均能自动恢复。
+
+## v8.3.68 / nav15 的同步回放日志
+
+旧`samples.csv`保持schema1。新增同目录`journey.csv`，每条记录末字段仍为此前UTF-8原文的CRC32；字符串使用base64，数值保持源数据：
+
+```text
+H,session,boot,first_seq,wire_next_seq,oldest_seq,count,board_now,flags,overflow,missed_slots,read_errors,start_ms,stop_ms,rx_wall_ms,rx_mono_ms,crc
+W,session,boot,batch_first_seq,index,sequence,board_ms,ax,ay,az,gx,gy,gz,temp,crc
+P,lat,lng,instant_kmh,accuracy_m,fix_wall_ms,rx_wall_ms,rx_mono_ms,age_ms,fix_mono_ms,real,simulation,source_base64,crc
+E,kind_base64,token,wall_ms,mono_ms,key,value_base64,...,crc
+```
+
+H及紧随的count条W组成一份接收批次，包含重传重复；崩溃修复只保留完整、CRC正确的批次。wire_next_seq是原始批头，不能用手机durable_next替代。P记录过滤前的原始瞬时速度与精度，包括无效/陈旧fix；`age_ms=rx_wall_ms-fix_wall_ms`、`fix_mono_ms=rx_mono_ms-age_ms`仅为映射，不是硬件同步UTC。真实/模拟及来源明确记录；位置使用来源坐标系（现有高德/网页路径为GCJ-02），不能未经转换当成WGS84。
+
+E记录完整身份、安装参考、配置、测试启停、门控与匿名事件结果。状态变化限频合并，变化观察时刻单独保存；原始批次/GPS保留供复算。完整身份晚到后追加修正，不覆写早期证据。匿名token通过有预算的磁盘索引关联原行程，导航结束、新导航或进程恢复后的迟到回执仍回原目录。无导航演练单独标为diagnostic_only，不混入上次骑行。不复制原报警JSON中的姓名、号码、提示和短信正文到导出包。
+
+新日志使用同一64项有界工作队列与512 MiB预算，额外内存缓冲上限64 KiB；正常工作线程每秒同步，IMU批次ACK、关键事件、结束与导出前同步。双文件都同步后才ACK；进程被杀可能丢失尚未同步的非关键GPS/事件尾部，工作队列积压时不能把“正常每秒”当作严格1秒无损承诺。
+
+nav15增加只读`#ID?`响应：二进制片头`D7 49 01 frameId offsetLE16 totalLE16`，正文为完整ASCII INFO+CRC32LE，总长≤160 B、单片≤MTU−3。手机按偏移有界组装，缺片/CRC错/3秒间隔拒绝；最多4次身份查询，重试不延长导航租约。旧INFO/FW文本保留兼容，截断FW前缀不视为完整版本。IMU与OTA原协议不变。
 
 ## 一小时验收方法
 

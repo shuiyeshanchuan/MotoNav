@@ -16,6 +16,10 @@ import java.util.Base64;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
+import java.util.Arrays;
 import java.util.Properties;
 import java.util.TimeZone;
 import java.util.UUID;
@@ -86,6 +90,30 @@ public final class ContinuousImuStore {
     private State state;
     private FileOutputStream stream;
     private boolean failed;
+    // One bounded sidecar buffer, also used for late callbacks to closed journeys.
+    private static final int TRACE_BUFFER_BYTES = 64 * 1024;
+    private static final int TRACE_LINE_BYTES = 8192;
+    private final StringBuilder traceBuffer = new StringBuilder(4096);
+    private File traceDirectory;
+    private static final Set<String> TRACE_FIELDS = new HashSet<>(Arrays.asList(
+            "state","reason","source","seconds","real_sms","armed","navigation","simulation","mode",
+            "boot","sequence","flags","age_ms","part","total","result","delivery","previous_state",
+            "remaining_ms","deadline_monotonic_ms","start_monotonic_ms","observed_monotonic_ms","coalesced_changes",
+            "dynamic_mps2","speed_drop_kmh","deceleration_mps2","imu_at_ms","gps_at_ms",
+            "fix_wall_ms","received_wall_ms","fix_monotonic_ms","received_monotonic_ms","accuracy_m","speed_kmh",
+            "dynamic_threshold_mps2","dynamic_duration_ms","max_gps_window_ms","max_imu_age_ms","max_gps_age_ms","evidence_window_ms",
+            "app_version","detector_version","trace_version","firmware","firmware_complete","screen",
+            "reference_state","reference_revision","reference_x","reference_y","reference_z","reference_samples","reference_reason",
+            "connected","verified","ota","continuous_supported","queue_rejected","protocol_errors"));
+    private static final String TRACE_HEADER = "# MotoNav journey trace v1; independent extension to samples.csv schema 1\n" +
+            "# Every data line ends in CRC32 of the preceding UTF-8 text; text values use base64.\n" +
+            "# H,session,boot,first_seq,wire_next_seq,oldest_seq,count,board_now,flags,overflow,missed_slots,read_errors,start_ms,stop_ms,rx_wall_ms,rx_mono_ms,crc\n" +
+            "# W,session,boot,batch_first_seq,index,sequence,board_ms,ax,ay,az,gx,gy,gz,temp,crc (includes retransmitted duplicates)\n" +
+            "# P,lat,lng,instant_kmh,accuracy_m,fix_wall_ms,rx_wall_ms,rx_mono_ms,age_ms,fix_mono_ms,real,simulation,source_base64,crc\n" +
+            "# E,kind_base64,token,wall_ms,mono_ms,key,value_base64,...,crc\n" +
+            "# H and its count W rows form one received batch. Only complete groups replay as batches.\n" +
+            "# GPS coordinates are source-native (current navigation sources use GCJ-02); fix time is not receive time.\n" +
+            "# Noncritical GPS/events flush each worker tick (normally 1s); queue delays/process death can lose an unsynced suffix. No contacts or message bodies.\n";
 
     public ContinuousImuStore(File root) throws IOException {
         this(root,DEFAULT_BUDGET_BYTES,DEFAULT_MINIMUM_FREE_BYTES);
@@ -101,6 +129,7 @@ public final class ContinuousImuStore {
         if(session<=0 || session>ContinuousImuProtocol.UINT32_MAX || wallMs<0 || monotonicMs<0 || mode==null || title==null)
             throw new IllegalArgumentException("invalid IMU session metadata");
         if(state!=null && state.active) throw new IllegalStateException("previous IMU session still active");
+        flushTrace();
         checkStorage(4096);
         String day=new SimpleDateFormat("yyyy-MM-dd",Locale.ROOT).format(new Date(wallMs));
         String time=new SimpleDateFormat("HHmmss",Locale.ROOT).format(new Date(wallMs));
@@ -116,6 +145,8 @@ public final class ContinuousImuStore {
             writeSynced(new File(directory,"README.txt"),readme);usedBytes+=readme.length;
             stream=new FileOutputStream(new File(directory,"samples.csv"),true);
             writeJournal(HEADER.getBytes(StandardCharsets.UTF_8));
+            selectTrace(directory);
+            flushTrace();
         } catch(IOException e) { poison();throw e; }
     }
 
@@ -150,6 +181,8 @@ public final class ContinuousImuStore {
         line(out,"T,"+next.boot+","+next.segments+","+next.durableNext+","+batch.overflow+","+batch.missedSlots+","+batch.readErrors+","+
                 batch.flags+","+batch.boardNow+","+batch.startMillis+","+batch.stopMillis+","+wallMs+","+receivedMonotonicMs);
         try {
+            traceBatch(batch,wallMs,receivedMonotonicMs);
+            flushTrace(); // Both the original wire evidence and deduplicated journal must be durable before ACK.
             writeJournal(out.toString().getBytes(StandardCharsets.UTF_8));
             state=next;saveMetadata(next);
             return next.durableNext;
@@ -172,13 +205,32 @@ public final class ContinuousImuStore {
         next.interrupted=next.interrupted || !reason.equals("navigation_ended") && !reason.equals("completed");
         next.tailUnknown=next.tailUnknown || next.interrupted;
         StringBuilder out=new StringBuilder();line(out,"F,"+base64(reason)+","+wallMs+","+monotonicMs+","+next.tailUnknown);
-        try { writeJournal(out.toString().getBytes(StandardCharsets.UTF_8));saveMetadata(next);stream.close();stream=null;state=next; }
+        try { flushTrace();writeJournal(out.toString().getBytes(StandardCharsets.UTF_8));saveMetadata(next);stream.close();stream=null;state=next; }
         catch(IOException e) { poison();throw e; }
     }
 
     public Stats snapshot() {
         if(state==null) throw new IllegalStateException("no IMU session");
         return new Stats(state);
+    }
+
+    /** A closed diagnostic session can coexist with the board tail still draining to an older ride. */
+    public File diagnosticSession(long session,long wall,long mono) throws IOException {
+        if(session<=0 || session>ContinuousImuProtocol.UINT32_MAX || wall<0 || mono<0) throw new IllegalArgumentException("invalid diagnostic session");
+        flushTrace();checkStorage(4096);
+        String day=new SimpleDateFormat("yyyy-MM-dd",Locale.ROOT).format(new Date(wall));
+        String time=new SimpleDateFormat("HHmmss",Locale.ROOT).format(new Date(wall));
+        File directory=new File(new File(root,day),time+"_"+UUID.randomUUID());
+        if(!directory.mkdirs()) throw new IOException("无法创建诊断会话目录");
+        State diagnostic=new State();diagnostic.session=session;diagnostic.mode="diagnostic_only";diagnostic.title="";
+        diagnostic.reason="diagnostic_only";diagnostic.active=false;diagnostic.directory=directory;
+        diagnostic.startWallMs=diagnostic.endWallMs=wall;diagnostic.startMonotonicMs=diagnostic.endMonotonicMs=mono;
+        diagnostic.timezone=TimeZone.getDefault().getID();saveMetadata(diagnostic);
+        StringBuilder journal=new StringBuilder(HEADER);line(journal,"F,"+base64("diagnostic_only")+","+wall+","+mono+",false");
+        byte[] data=journal.toString().getBytes(StandardCharsets.UTF_8);checkStorage(data.length);
+        writeSynced(new File(directory,"samples.csv"),data);usedBytes+=data.length;
+        byte[] readme=README.getBytes(StandardCharsets.UTF_8);checkStorage(readme.length);writeSynced(new File(directory,"README.txt"),readme);usedBytes+=readme.length;
+        selectTrace(directory);return directory;
     }
 
     /** Close unfinished old files as interrupted. This never restarts navigation or sampling. */
@@ -191,6 +243,8 @@ public final class ContinuousImuStore {
             File[] sessions=day.listFiles(File::isDirectory);if(sessions==null) continue;
             for(File directory:sessions) {
                 File meta=new File(directory,"metadata.properties");if(!meta.isFile()) continue;
+                File trace=new File(directory,"journey.csv");
+                if(trace.isFile()) { long size=trace.length();recoverTrace(trace);usedBytes-=size-trace.length(); }
                 Properties p=new Properties();try(FileInputStream input=new FileInputStream(meta)) { p.load(input); }
                 if(!Boolean.parseBoolean(p.getProperty("active","false"))) continue;
                 State s=initialMetadata(p,directory);
@@ -210,6 +264,137 @@ public final class ContinuousImuStore {
         }
         recovered.sort((a,b)->Long.compare(a.startWallMs,b.startWallMs));
         return recovered;
+    }
+
+    /** Appends source fixes, including invalid/stale fixes, without silently replacing speed by a trip maximum. */
+    public void traceGps(File directory,double lat,double lng,double kmh,double accuracy,long fixWall,
+                         long receivedWall,long receivedMono,boolean simulation,String source) throws IOException {
+        if(source==null || source.length()>64 || receivedWall<0 || receivedMono<0) throw new IllegalArgumentException("invalid GPS trace");
+        selectTrace(directory);
+        StringBuilder out=new StringBuilder();
+        long age=receivedWall-fixWall;
+        line(out,"P,"+lat+","+lng+","+kmh+","+accuracy+","+fixWall+","+receivedWall+","+receivedMono+","+age+","+(receivedMono-age)+","+!simulation+","+simulation+","+base64(source));
+        bufferTrace(out.toString());
+    }
+
+    /** Strict keys keep contact identities, SMS text and UI prompts out of exported diagnostic packages. */
+    public void traceEvent(File directory,String kind,long token,Map<String,String> fields,long wall,long mono,boolean durable) throws IOException {
+        if(kind==null || !kind.matches("[a-z][a-z0-9_]{0,63}") || token<0 || wall<0 || mono<0 || fields==null)
+            throw new IllegalArgumentException("invalid journey event");
+        selectTrace(directory);
+        StringBuilder body=new StringBuilder("E,"+base64(kind)+","+token+","+wall+","+mono);
+        int count=0;
+        for(Map.Entry<String,String> field:fields.entrySet()) {
+            if(!TRACE_FIELDS.contains(field.getKey()) || field.getValue()==null) continue;
+            if(++count>40) throw new IllegalArgumentException("too many journey fields");
+            String value=field.getValue();
+            if(value.length()>256) value=value.substring(0,256);
+            body.append(',').append(field.getKey()).append(',').append(base64(value));
+        }
+        StringBuilder out=new StringBuilder();line(out,body.toString());
+        if(out.length()>TRACE_LINE_BYTES) throw new IllegalArgumentException("journey event too long");
+        bufferTrace(out.toString());
+        if(durable) flushTrace();
+    }
+
+    /** Durable small on-disk routing index: no unbounded token map and no personal/contact data. */
+    public void bindEventToken(long token,File directory) throws IOException {
+        if(token<=0) throw new IllegalArgumentException("invalid event token");
+        File safe=checkedDirectory(directory),index=new File(root,"event_index");
+        if(!index.isDirectory() && !index.mkdirs()) throw new IOException("无法创建事件索引");
+        File destination=new File(index,token+".ref");
+        if(destination.exists()) {
+            if(!safe.equals(eventDirectory(token))) throw new IOException("事件编号已属于另一段行程");
+            return;
+        }
+        String relative=root.toPath().relativize(safe.toPath()).toString().replace('\\','/');
+        StringBuilder out=new StringBuilder();line(out,relative);byte[] data=out.toString().getBytes(StandardCharsets.UTF_8);
+        checkStorage(data.length);File temporary=new File(index,token+".ref.tmp");writeSynced(temporary,data);
+        atomicReplace(temporary,destination);usedBytes+=data.length;
+    }
+
+    public File eventDirectory(long token) throws IOException {
+        if(token<=0) return null;
+        File ref=new File(new File(root,"event_index"),token+".ref");
+        if(!ref.isFile()) return null;
+        if(ref.length()>512) throw new IOException("事件索引损坏");
+        byte[] data=Files.readAllBytes(ref.toPath());String text=new String(data,StandardCharsets.UTF_8);
+        if(!text.endsWith("\n")) throw new IOException("事件索引未完成");
+        text=text.substring(0,text.length()-1);int comma=text.lastIndexOf(',');
+        if(comma<1 || !text.substring(comma+1).equals(crcText(text.substring(0,comma)))) throw new IOException("事件索引校验失败");
+        return checkedDirectory(new File(root,text.substring(0,comma)));
+    }
+
+    /** Called on the same FIFO worker every second, before export and before every ACK. */
+    public void flushTrace() throws IOException {
+        if(traceBuffer.length()==0) return;
+        byte[] data=traceBuffer.toString().getBytes(StandardCharsets.UTF_8);checkStorage(data.length);
+        try(FileOutputStream output=new FileOutputStream(new File(traceDirectory,"journey.csv"),true)) {
+            output.write(data);output.getFD().sync();
+        }
+        usedBytes+=data.length;traceBuffer.setLength(0);
+    }
+
+    public File checkedDirectory(File directory) throws IOException {
+        if(directory==null) throw new IOException("没有行程目录");
+        File safe=directory.getCanonicalFile();
+        if(!safe.toPath().startsWith(root.toPath()) || safe.equals(root) || !new File(safe,"metadata.properties").isFile())
+            throw new IOException("无效的行程目录");
+        return safe;
+    }
+
+    private void selectTrace(File directory) throws IOException {
+        File safe=checkedDirectory(directory);
+        if(safe.equals(traceDirectory)) return;
+        flushTrace();traceDirectory=safe;
+        File file=new File(safe,"journey.csv");
+        if(file.exists()) { long size=file.length();recoverTrace(file);usedBytes-=size-file.length(); }
+        else { byte[] bytes=TRACE_HEADER.getBytes(StandardCharsets.UTF_8);checkStorage(bytes.length);writeSynced(file,bytes);usedBytes+=bytes.length; }
+    }
+    private void bufferTrace(String text) throws IOException {
+        if(text.length()>TRACE_BUFFER_BYTES) throw new IllegalArgumentException("oversized trace batch");
+        if(traceBuffer.length()+text.length()>TRACE_BUFFER_BYTES) flushTrace();
+        checkStorage(traceBuffer.length()+text.length());traceBuffer.append(text);
+    }
+    private void traceBatch(ContinuousImuProtocol.Batch b,long wall,long mono) throws IOException {
+        selectTrace(state.directory);StringBuilder out=new StringBuilder(4096);
+        line(out,"H,"+b.session+","+b.boot+","+b.firstSeq+","+b.nextSeq+","+b.oldestSeq+","+b.samples.size()+","+b.boardNow+","+b.flags+","+
+                b.overflow+","+b.missedSlots+","+b.readErrors+","+b.startMillis+","+b.stopMillis+","+wall+","+mono);
+        for(int i=0;i<b.samples.size();i++) {
+            ContinuousImuProtocol.Sample s=b.samples.get(i);
+            line(out,"W,"+b.session+","+b.boot+","+b.firstSeq+","+i+","+(b.firstSeq+i)+","+s.timestamp+","+
+                    s.ax+","+s.ay+","+s.az+","+s.gx+","+s.gy+","+s.gz+","+s.temperature);
+        }
+        bufferTrace(out.toString());
+    }
+    private static void recoverTrace(File file) throws IOException {
+        try(RandomAccessFile input=new RandomAccessFile(file,"rw")) {
+            long good=0,batchStart=-1;int remaining=0;
+            while(input.getFilePointer()<input.length()) {
+                ByteArrayOutputStream bytes=new ByteArrayOutputStream(256);boolean terminated=false;
+                while(bytes.size()<=TRACE_LINE_BYTES) { int ch=input.read();if(ch<0) break;if(ch=='\n') { terminated=true;break; }bytes.write(ch); }
+                if(!terminated) break;
+                String text=new String(bytes.toByteArray(),StandardCharsets.UTF_8);
+                if(text.startsWith("#") && remaining==0) { good=input.getFilePointer();continue; }
+                int comma=text.lastIndexOf(',');if(comma<=0 || !text.substring(comma+1).equals(crcText(text.substring(0,comma)))) break;
+                String[] p=text.substring(0,comma).split(",",-1);
+                try {
+                    if(remaining>0) { if(!p[0].equals("W") || p.length!=14) break;remaining--; }
+                    else if(p[0].equals("H") && p.length==16) {
+                        int count=Integer.parseInt(p[6]);if(count<0 || count>8) break;
+                        batchStart=good;remaining=count;
+                    } else if(p[0].equals("W") || !(p[0].equals("P") && p.length==13 || p[0].equals("E") && p.length>=5 && p.length%2==1)) break;
+                } catch(RuntimeException e) { break; }
+                if(remaining==0) { good=input.getFilePointer();batchStart=-1; }
+            }
+            if(batchStart>=0) good=batchStart;
+            if(input.length()!=good) { input.setLength(good);input.getFD().sync(); }
+        }
+    }
+
+    private static void atomicReplace(File temporary,File destination) throws IOException {
+        try { Files.move(temporary.toPath(),destination.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING); }
+        catch(AtomicMoveNotSupportedException e) { Files.move(temporary.toPath(),destination.toPath(),StandardCopyOption.REPLACE_EXISTING); }
     }
 
     private static State initialMetadata(Properties p,File directory) throws IOException {

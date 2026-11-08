@@ -29,17 +29,16 @@ struct ImuPageTelemetry {
 
 #include <ImuDrv.hpp>
 #include <math.h>
+#include "ImuAcquisitionQueue.h"
 
 // The diagnostic image keeps a small, fixed-size summary ring.  It is not an
 // accident detector and it is never used to change navigation state.  Keeping
 // only quantised magnitudes makes this legacy diagnostic's memory cost bounded.
 // The independent navigation recorder has its own opt-in, finite PSRAM buffer.
 static constexpr uint8_t IMU_DIAG_RING_SIZE = 64;
-// The diagnostic reader runs from the shared main loop.  On the real 1.75C,
-// normal loop/I2C scheduling jitter has been measured at 46-47 ms even while
-// every sensor read succeeds.  Keep this threshold above that jitter so a
-// scheduler delay is not reported as a lost sample; this remains a health
-// diagnostic threshold, never an accident-detection threshold.
+// Legacy health threshold, independent of the recorder's 40 ms deadline.
+// Retain it when moving reads out of the display loop; never hide delays by
+// changing the health threshold or filling missed slots with old readings.
 static constexpr uint32_t IMU_DIAG_GAP_MS = 75;
 static constexpr float IMU_DIAG_GRAVITY_MIN = 7.5f;
 static constexpr float IMU_DIAG_GRAVITY_MAX = 12.5f;
@@ -120,6 +119,13 @@ struct ImuDiagnosticsState {
 
 ImuDiagnosticsState imuDiagnostics;
 
+static constexpr size_t IMU_ACQUISITION_CAPACITY = 256;
+static ImuAcquisition::Queue<IMU_ACQUISITION_CAPACITY> imuAcquisitionQueue;
+static portMUX_TYPE imuAcquisitionMux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t imuAcquisitionSeenDrops = 0;
+static TaskHandle_t imuSamplingTask = nullptr;
+inline uint32_t imuDiagnosticsControlBoundary();
+
 static ImuMount::Reference imuMountReference = {};
 static ImuMount::Collector imuMountCollector;
 static bool imuMountStatusPending = false;
@@ -162,7 +168,7 @@ inline void startImuMountReference() {
     requestImuMountReferenceStatus();
     return;
   }
-  const uint32_t now = millis();
+  const uint32_t now = imuDiagnosticsControlBoundary();
   imuMountStartReadErrors = imuDiagnostics.readErrors;
   imuMountCollector.start(now, imuMountSensorHealthy() && imuDiagnostics.samples > 0 &&
       now - imuDiagnostics.lastSampleAt <= ImuMount::MAX_GAP_MS);
@@ -203,6 +209,7 @@ inline void imuMountReferenceTick(uint32_t now) {
 
 inline void recordImuMountSample(uint32_t now, const AccelerometerData &accel, const GyroscopeData &gyro) {
   if (imuMountCollector.state != ImuMount::COLLECTING) return;
+  if (int32_t(now - imuMountCollector.startedAt) < 0) return;
   const ImuMount::State previous = imuMountCollector.state;
   const bool saturated = imuDiagnosticRawSaturated(accel.raw.x) || imuDiagnosticRawSaturated(accel.raw.y) ||
       imuDiagnosticRawSaturated(accel.raw.z) || imuDiagnosticRawSaturated(gyro.raw.x) ||
@@ -405,30 +412,84 @@ inline void initImuDiagnostics() {
                 static_cast<unsigned long>(imuDiagnostics.readErrors));
 }
 
-inline void imuDiagnosticsTick() {
-  const uint32_t now = millis();
-  imuMountReferenceTick(now);
-  if (!imuDiagnostics.configured) return;
-
-  // The main loop normally runs around 10 ms.  Keep the diagnostic reader
-  // non-blocking and avoid duplicate samples when the sensor is not ready.
-  if (now - imuDiagnostics.lastSampleAt < 5) return;
-  if (!imuDiagnostics.sensor.isDataReady(static_cast<uint8_t>(
-          ImuBase::DataReadyMask::BOTH))) return;
-
-  AccelerometerData accel;
-  GyroscopeData gyro;
-  const bool accelOk = imuDiagnostics.sensor.readAccel(accel);
-  const bool gyroOk = imuDiagnostics.sensor.readGyro(gyro);
-  if (!accelOk || !gyroOk || !isfinite(accel.mps2.x) ||
-      !isfinite(accel.mps2.y) || !isfinite(accel.mps2.z) ||
-      !isfinite(gyro.dps.x) || !isfinite(gyro.dps.y) ||
-      !isfinite(gyro.dps.z) || !isfinite(accel.temperature)) {
-    ++imuDiagnostics.readErrors;
-    continuousImuRecordReadError();
-    imuMountReferenceTick(now);
-    return;
+// Only this task accesses the sensor after setup. It owns no recorder, mount,
+// health, UI, Serial or BLE state. I2C is released before publishing an event.
+inline void acquireImuSample() {
+  AccelerometerData accel{};
+  GyroscopeData gyro{};
+  bool valid;
+  {
+    SharedWireGuard lock;
+    if (!imuDiagnostics.sensor.isDataReady(static_cast<uint8_t>(
+            ImuBase::DataReadyMask::BOTH))) return;
+    const bool accelOk = imuDiagnostics.sensor.readAccel(accel);
+    const bool gyroOk = imuDiagnostics.sensor.readGyro(gyro);
+    valid = accelOk && gyroOk && isfinite(accel.mps2.x) &&
+        isfinite(accel.mps2.y) && isfinite(accel.mps2.z) &&
+        isfinite(gyro.dps.x) && isfinite(gyro.dps.y) &&
+        isfinite(gyro.dps.z) && isfinite(accel.temperature);
   }
+  ImuAcquisition::Event event;
+  event.valid = valid;
+  event.ax = accel.mps2.x; event.ay = accel.mps2.y; event.az = accel.mps2.z;
+  event.gx = gyro.dps.x; event.gy = gyro.dps.y; event.gz = gyro.dps.z;
+  event.temperature = accel.temperature;
+  event.rawAccel[0] = accel.raw.x; event.rawAccel[1] = accel.raw.y; event.rawAccel[2] = accel.raw.z;
+  event.rawGyro[0] = gyro.raw.x; event.rawGyro[1] = gyro.raw.y; event.rawGyro[2] = gyro.raw.z;
+  portENTER_CRITICAL(&imuAcquisitionMux);
+  // Timestamp the real completed read, never the later display-loop drain.
+  // Publishing and command fences use the same lock, including millis().
+  event.timestamp = millis();
+  imuAcquisitionQueue.push(event);
+  portEXIT_CRITICAL(&imuAcquisitionMux);
+}
+
+inline void imuSamplingLoop(void *) {
+  const TickType_t period = pdMS_TO_TICKS(5);
+  TickType_t wake = xTaskGetTickCount();
+  for (;;) {
+    acquireImuSample();
+    // An overdue I2C read cannot be caught up by repeated reads of one frame.
+    // Rebase the poll wake-up only; the recorder retains its fixed 40 ms phase.
+    if (xTaskDelayUntil(&wake, period) == pdFALSE) {
+      vTaskDelay(period);
+      wake = xTaskGetTickCount();
+    }
+  }
+}
+
+inline void startImuSamplingTask() {
+  if (!imuDiagnostics.configured || imuSamplingTask) return;
+  if (!sharedWireMutex || xTaskCreatePinnedToCore(imuSamplingLoop, "imu-read", 4096,
+      nullptr, 2, &imuSamplingTask, 1) != pdPASS) {
+    imuDiagnostics.configured = false;
+    imuDiagnostics.statusPending = true;
+    Serial.println("IMU diag: sampler unavailable (I2C lock/task allocation failed)");
+  } else {
+    Serial.printf("IMU acquisition: poll=5ms queue=%u event=%u bytes=%u stack=4096\n",
+        unsigned(IMU_ACQUISITION_CAPACITY), unsigned(sizeof(ImuAcquisition::Event)),
+        unsigned(sizeof(imuAcquisitionQueue)));
+  }
+}
+
+inline void consumeImuReadErrors(uint32_t total) {
+  const uint32_t added = total - imuDiagnostics.readErrors;
+  if (!added) return;
+  imuDiagnostics.readErrors = total;
+  continuousImuRecordReadError(added);
+}
+
+inline void consumeImuSample(const ImuAcquisition::Event &event) {
+  consumeImuReadErrors(event.readErrors);
+  if (!event.valid) return;
+  const uint32_t now = event.timestamp;
+  AccelerometerData accel{};
+  GyroscopeData gyro{};
+  accel.mps2 = {event.ax, event.ay, event.az};
+  gyro.dps = {event.gx, event.gy, event.gz};
+  accel.raw = {event.rawAccel[0], event.rawAccel[1], event.rawAccel[2]};
+  gyro.raw = {event.rawGyro[0], event.rawGyro[1], event.rawGyro[2]};
+  accel.temperature = event.temperature;
 
   imuDiagnostics.lastSampleAt = now;
   imuDiagnostics.ax = accel.mps2.x;
@@ -456,6 +517,42 @@ inline void imuDiagnosticsTick() {
                   static_cast<unsigned long>(imuDiagnostics.samples),
                   static_cast<unsigned long>(imuDiagnostics.readErrors));
   }
+}
+
+inline uint32_t imuDiagnosticsControlBoundary() {
+  // Drain exactly the FIFO prefix acquired before this fence. Later events
+  // remain queued and are applied after START/STOP, in timestamp order.
+  portENTER_CRITICAL(&imuAcquisitionMux);
+  const uint32_t boundary = millis();
+  const ImuAcquisition::Snapshot pending = imuAcquisitionQueue.snapshot();
+  portEXIT_CRITICAL(&imuAcquisitionMux);
+  for (size_t i = 0; i < pending.count; ++i) {
+    ImuAcquisition::Event event;
+    portENTER_CRITICAL(&imuAcquisitionMux);
+    const bool have = imuAcquisitionQueue.pop(event);
+    portEXIT_CRITICAL(&imuAcquisitionMux);
+    if (have) consumeImuSample(event);
+  }
+  // Errors remain visible even if the corresponding event could not be queued.
+  consumeImuReadErrors(pending.readErrors);
+  const uint32_t dropped = pending.dropped - imuAcquisitionSeenDrops;
+  imuAcquisitionSeenDrops = pending.dropped;
+  if (dropped) {
+    continuousImuRecordAcquisitionOverflow(dropped);
+    if (imuMountCollector.state == ImuMount::COLLECTING) {
+      imuMountCollector.fail(ImuMount::GAP);
+      requestImuMountReferenceStatus();
+    }
+    Serial.printf("IMU acquisition: dropped=%lu total=%lu\n",
+        static_cast<unsigned long>(dropped), static_cast<unsigned long>(pending.dropped));
+  }
+  return boundary;
+}
+
+inline void imuDiagnosticsTick() {
+  imuDiagnosticsControlBoundary();
+  // Evaluate wall-clock freshness only after consuming the captured samples.
+  imuMountReferenceTick(millis());
 }
 
 inline void setImuDiagnosticsStream(bool enabled) {
@@ -582,6 +679,8 @@ inline bool readImuMountReference(float &ax, float &ay, float &az, uint32_t &rev
   return false;
 }
 inline void initImuDiagnostics() {}
+inline void startImuSamplingTask() {}
+inline uint32_t imuDiagnosticsControlBoundary() { return millis(); }
 inline void imuDiagnosticsTick() {}
 inline void imuDiagnosticsNotifyTick() {
   if (!imuMountUnsupportedStatusPending || !txChar || !bleConnected || !bleAuthed) return;

@@ -46,6 +46,12 @@ object ContinuousImuRecorder {
     private var linkWasReady = false
     private var annotatedQueueRejected = 0L
     private var annotatedBadPackets = 0L
+    private var sourceSimulation = false
+    private var sourceMode = "unknown"
+    private var identitySignature = ""
+    private var detectorConfiguration: Map<String, String> = emptyMap()
+    private var diagnosticDirectory: File? = null
+    private var identityDirectory: File? = null
 
     @Synchronized fun init(c: Context) {
         if (initialized) return
@@ -61,7 +67,8 @@ object ContinuousImuRecorder {
                 var latest: File? = null
                 root.listFiles()?.filter { it.isDirectory }?.forEach { day ->
                     day.listFiles()?.filter { it.isDirectory }?.forEach { recording ->
-                        if (latest == null || recording.lastModified() > latest!!.lastModified()) latest = recording
+                        if (File(recording, "metadata.properties").isFile() &&
+                            (latest == null || recording.lastModified() > latest!!.lastModified())) latest = recording
                     }
                 }
                 latestDirectory = latest
@@ -106,6 +113,12 @@ object ContinuousImuRecorder {
             firstRequestedAt = now; lastReceivedAt = 0; lastControlAt = 0
             annotatedQueueRejected = queueRejected.get(); annotatedBadPackets = badPackets.get()
             latestDirectory = store.snapshot().directory
+            sourceSimulation = simulation; sourceMode = mode; identitySignature = ""
+            diagnosticDirectory = null
+            identityDirectory = latestDirectory
+            trace("navigation_started", fields = mapOf("mode" to mode, "simulation" to simulation.toString(), "navigation" to "true"), durable = true)
+            recordIdentity()
+            if (detectorConfiguration.isNotEmpty()) trace("detector_configuration", fields = detectorConfiguration, durable = true)
             message = "连续记录已开启，等待圆屏确认${if (simulation) "（模拟导航）" else ""}"
             tick(now)
         }
@@ -116,6 +129,7 @@ object ContinuousImuRecorder {
     private fun requestStop() {
         if (session == 0L || !navigating) return
         navigating = false; stoppingAt = SystemClock.elapsedRealtime(); lastControlAt = 0
+        trace("navigation_stopped", fields = mapOf("navigation" to "false"), durable = true)
         message = "导航已结束，正在保存圆屏缓存"
         control(2)
     }
@@ -148,16 +162,11 @@ object ContinuousImuRecorder {
                 BleLink.sendImuRecordControl(ContinuousImuProtocol.encodeControl(2, batch.session, batch.boot, 0))
             return
         }
-        val first = lastReceivedAt == 0L
         durableNext = store.append(batch, wall, receivedAt) // includes fsync; never ACK queued-only bytes
         boot = batch.boot; publishedBoot = boot; lastReceivedAt = receivedAt
-        if (first) {
-            store.note("firmware", BleLink.screenFirmware)
-            store.note("screen", BleLink.screenName)
-        }
+        recordIdentity()
         control(3, durableNext)
         val stats = store.snapshot()
-        latestDirectory = stats.directory
         message = "${if (navigating) "连续记录中" else "正在保存缓存"} · 已保存 ${stats.writtenSamples} 条\n序号缺口 ${stats.gapSamples} 条 · 漏采槽位 ${stats.missedSlots}"
         if (batch.flags and 12 != 0) {
             control(2)
@@ -182,7 +191,13 @@ object ContinuousImuRecorder {
         }
         val ready = BleLink.isConnected && BleLink.verified && !BleLink.otaInProgress
         if (ready && !linkWasReady) lastControlAt = 0
+        if (ready != linkWasReady && latestDirectory != null) {
+            trace("recorder_link_state", fields = mapOf("connected" to BleLink.isConnected.toString(),
+                "verified" to BleLink.verified.toString(), "ota" to BleLink.otaInProgress.toString()), durable = true)
+        }
         linkWasReady = ready
+        if (latestDirectory != null) recordIdentity()
+        store.flushTrace()
         if (session == 0L) {
             if (ready && now - lastIdleQueryAt >= 10000) {
                 lastIdleQueryAt = now
@@ -217,9 +232,9 @@ object ContinuousImuRecorder {
 
     private fun finish(reason: String) {
         annotateCounters()
+        trace("recording_stopped", fields = mapOf("reason" to reason, "navigation" to navigating.toString()), durable = true)
         store.stop(reason, System.currentTimeMillis(), SystemClock.elapsedRealtime())
         val stats = store.snapshot()
-        latestDirectory = stats.directory
         message = if (reason == "navigation_ended") "连续记录已保存 · ${stats.writtenSamples} 条\n序号缺口 ${stats.gapSamples} 条 · 漏采槽位 ${stats.missedSlots}${if (stats.tailUnknown) " · 存在未确认片段" else ""}"
             else "连续记录已保存 · ${when (reason) {
                 "new_navigation_tail_unknown" -> "已切换新导航，旧记录尾部未确认"
@@ -243,10 +258,97 @@ object ContinuousImuRecorder {
         android.util.Log.e("MotoNavIMU", message, e)
     }
 
+    /** Caller-time stamps preserve ordering even if the bounded disk queue is temporarily busy. */
+    fun recordGpsFix(lat: Double, lng: Double, kmh: Double, accuracy: Double, fixWall: Long,
+                     receivedWall: Long, receivedMonotonic: Long, source: String) = offer {
+        if (session != 0L && navigating) {
+            store.traceGps(store.snapshot().directory, lat, lng, kmh, accuracy, fixWall, receivedWall,
+                receivedMonotonic, sourceSimulation, source.take(64))
+        }
+    }
+
+    fun recordEmergencyEvent(kind: String, token: Long, fields: Map<String, String> = emptyMap()) {
+        val wall = System.currentTimeMillis(); val mono = SystemClock.elapsedRealtime()
+        val captured = fields.entries.take(40).associate { it.key to it.value.take(256) }
+        offer(critical = true) { trace(kind, token, captured, wall, mono, durable = true) }
+    }
+
+    fun recordDiagnosticEvent(kind: String, fields: Map<String, String> = emptyMap()) {
+        val wall = System.currentTimeMillis(); val mono = SystemClock.elapsedRealtime()
+        val captured = fields.entries.take(40).associate { it.key to it.value.take(256) }
+        offer { trace(kind, fields = captured, wall = wall, mono = mono) }
+    }
+
+    fun recordDetectorConfiguration(config: Map<String, String>) {
+        val captured = config.entries.take(32).associate { it.key to it.value.take(128) } +
+            mapOf("detector_version" to "BrakeTestDetector-v1", "trace_version" to "1")
+        offer(critical = true) {
+            detectorConfiguration = captured
+            trace("detector_configuration", fields = captured, durable = true)
+        }
+    }
+
+    fun onDeviceIdentityChanged() = offer { if (latestDirectory != null) recordIdentity() }
+
+    private fun identityFields(mode: String = sourceMode, simulation: Boolean = sourceSimulation): Map<String, String> {
+        val reference = BleLink.screenImuMountReference
+        return linkedMapOf("app_version" to APP_VERSION, "firmware" to BleLink.screenFirmware.take(128),
+            "firmware_complete" to BleLink.screenFirmwareComplete.toString(), "screen" to BleLink.screenName.take(64),
+            "source" to "ble_device_identity", "simulation" to simulation.toString(), "mode" to mode,
+            "reference_state" to (reference?.state?.toString() ?: "unknown"),
+            "reference_revision" to (reference?.revision?.toString() ?: "unknown"),
+            "reference_x" to (reference?.referenceX?.toString() ?: "unknown"),
+            "reference_y" to (reference?.referenceY?.toString() ?: "unknown"),
+            "reference_z" to (reference?.referenceZ?.toString() ?: "unknown"),
+            "reference_samples" to (reference?.sampleCount?.toString() ?: "unknown"),
+            "reference_reason" to (reference?.reason?.toString() ?: "unknown"))
+    }
+
+    private fun recordIdentity() {
+        val directory = identityDirectory ?: return
+        val fields = identityFields()
+        val signature = fields.toString()
+        if (signature != identitySignature) {
+            store.traceEvent(directory, "identity", 0, fields, System.currentTimeMillis(), SystemClock.elapsedRealtime(), true)
+            identitySignature = signature
+        }
+    }
+
+    private fun trace(kind: String, token: Long = 0, fields: Map<String, String> = emptyMap(),
+                      wall: Long = System.currentTimeMillis(), mono: Long = SystemClock.elapsedRealtime(), durable: Boolean = false) {
+        var directory = if (token > 0) store.eventDirectory(token) else null
+        if (directory == null) {
+            val manualOutsideNavigation = kind == "alert_started" && fields["source"] == "manual_drill" && !navigating
+            directory = when {
+                manualOutsideNavigation -> newDiagnosticSession(wall, mono)
+                session != 0L -> store.snapshot().directory
+                token > 0 -> newDiagnosticSession(wall, mono)
+                kind == "arm" || kind == "disarm" -> diagnosticDirectory ?: newDiagnosticSession(wall, mono)
+                else -> return // Startup gates/config do not attach themselves to a previous ride.
+            }
+            if (token > 0) store.bindEventToken(token, directory)
+        }
+        store.traceEvent(directory, kind, token, fields, wall, mono, durable)
+    }
+
+    private fun newDiagnosticSession(wall: Long, mono: Long): File {
+        var id: Long
+        do { id = random.nextInt().toLong() and 0xffffffffL } while (id == 0L)
+        val directory = store.diagnosticSession(id, wall, mono)
+        diagnosticDirectory = directory; latestDirectory = directory
+        store.traceEvent(directory, "identity", 0, identityFields("diagnostic_only", false), wall, mono, true)
+        if (detectorConfiguration.isNotEmpty())
+            store.traceEvent(directory, "detector_configuration", 0, detectorConfiguration, wall, mono, true)
+        return directory
+    }
+
     /** Stream one session into a bounded temporary ZIP; never load a ride into RAM. */
-    fun exportLatest(callback: (File?, String?) -> Unit) = offer {
+    fun exportLatest(callback: (File?, String?) -> Unit) = exportSession(null, callback)
+
+    fun exportSession(requested: File?, callback: (File?, String?) -> Unit) = offer {
         val result = runCatching {
-            val directory = latestDirectory ?: error("还没有连续记录，请先开始一次导航")
+            store.flushTrace()
+            val directory = store.checkedDirectory(requested ?: latestDirectory ?: error("还没有连续记录，请先开始一次导航"))
             val output = File(context.cacheDir, "imu_exports").apply { check(isDirectory || mkdirs()) }
             output.listFiles()?.filter { it.extension == "zip" }?.forEach { check(it.delete()) }
             val archive = File(output, "MotoNav-IMU-${directory.name}.zip")

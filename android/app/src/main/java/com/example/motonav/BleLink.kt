@@ -90,6 +90,26 @@ object BleLink {
     private val session = BleSession<BluetoothGatt>()
     private var triedDirect = false
     private var capabilityQuerySent = false
+    private val identityAssembler = DeviceIdentityProtocol()
+    private var identityQueries = 0
+    private val identityRetry = Runnable { queryCompleteIdentity() }
+
+    private fun sendIdentityQuery(msg: String) {
+        // #ID? and #INFO? must never replace a WeChat #I notification event.
+        synchronized(lock) { enqueue("IDENTITY:$msg", msg.toByteArray(Charsets.UTF_8)) }
+        pump()
+    }
+
+    private fun queryCompleteIdentity() {
+        if (!ready || !verified || otaInProgress || screenFirmwareComplete || identityQueries >= 4) return
+        identityQueries++
+        sendIdentityQuery("#ID?")
+        // Legacy fallback is queried once here, and again on actual MTU change.
+        // Retries of the new query must not refresh the navigation lease.
+        if (identityQueries == 1) { sendIdentityQuery("#INFO?"); sendIdentityQuery("#OTA?") }
+        handler.removeCallbacks(identityRetry)
+        handler.postDelayed(identityRetry, 3500L)
+    }
 
     private fun trace(message: String) { Log.i("MotoNavBLE", message) }
 
@@ -100,6 +120,8 @@ object BleLink {
     }
 
     private fun closeCurrent() {
+        handler.removeCallbacks(identityRetry)
+        identityAssembler.reset(); identityQueries = 0; screenFirmwareComplete = false
         if (otaInProgress) finishOta(false, "蓝牙连接中断")
         val old = gatt
         gatt = null
@@ -195,6 +217,8 @@ object BleLink {
     @Volatile var screenBleStats = ""                 // 最近一次 BLE 队列/重连诊断
     @Volatile var screenBoard = ""
     @Volatile var screenFirmware = ""
+    @Volatile var screenFirmwareComplete = false
+        private set
     @Volatile var screenProtocol = -1
     @Volatile var screenOtaReady = false
     @Volatile var screenOtaStatusKnown = false
@@ -303,14 +327,16 @@ object BleLink {
         screenInfo = ""
         screenBoard = ""
         screenFirmware = ""
+        screenFirmwareComplete = false
+        identityAssembler.reset(); identityQueries = 0
+        handler.removeCallbacks(identityRetry)
         screenProtocol = -1
         screenOtaReady = false
         screenOtaStatusKnown = false
         screenOtaPower = false
         capabilityQuerySent = true
         send("#BLE?")
-        send("#INFO?")
-        send("#OTA?")
+        queryCompleteIdentity()
     }
 
     fun stopAuto() {
@@ -507,6 +533,7 @@ object BleLink {
             sendEvent("#HM,0")
             send("#BLE?")
             send("#OTA?")
+            queryCompleteIdentity()
             // MTU negotiation can complete with the fallback 23-byte value
             // while the pairing dialog is still open.  Retry after the link is
             // authenticated so the signed BEGIN control packet can fit.
@@ -522,6 +549,10 @@ object BleLink {
     }
 
     private fun onNotify(bytes: ByteArray?, receivedAtMonotonicMs: Long) {
+        if (DeviceIdentityProtocol.isFrame(bytes)) {
+            identityAssembler.accept(bytes!!, receivedAtMonotonicMs)?.let { applyDeviceInfo(it, true) }
+            return
+        }
         // Recording has its own bounded binary parser and writer, independent
         // of the opt-in display/baseline IMU listener.
         if (bytes != null && ContinuousImuRecorder.onNotification(bytes, receivedAtMonotonicMs)) return
@@ -578,7 +609,12 @@ object BleLink {
             trace("device $msg"); return
         }
         if (msg.startsWith("FW,")) {
-            screenFirmware = msg.substringAfter("FW,").trim()
+            val firmware = msg.substringAfter("FW,").trim()
+            // A legacy FW packet has no end marker. Its truncated prefix may
+            // match a version regex, even if MTU grew before callback dispatch.
+            if (!screenFirmwareComplete) {
+                screenFirmware = firmware
+            }
             trace("device $msg"); return
         }
         if (msg.startsWith("OP,")) {
@@ -586,17 +622,7 @@ object BleLink {
             trace("device $msg"); return
         }
         if(msg.startsWith("INFO,")) {
-            screenInfo = msg
-            val info = msg.split(',')
-            screenBoard = info.getOrNull(1).orEmpty()
-            val reportedFirmware = info.getOrNull(2).orEmpty()
-            val completeFirmware = Regex("""^v\d+\.\d+\.\d+(?:[-._][A-Za-z0-9._-]+)?$""")
-            if (!completeFirmware.matches(screenFirmware) || completeFirmware.matches(reportedFirmware))
-                screenFirmware = reportedFirmware
-            if (!screenOtaStatusKnown) {
-                screenProtocol = info.getOrNull(3)?.toIntOrNull() ?: -1
-                screenOtaReady = info.getOrNull(5) == "1"
-            }
+            applyDeviceInfo(msg, bytes!!.size < mtu - 3 && DeviceIdentityProtocol.completeInfo(msg))
             trace("device $msg"); return
         }
         if(msg.startsWith("SELFTEST,")) {
@@ -703,6 +729,21 @@ object BleLink {
             "DONE" -> finishOta(true, "OTA 升级完成，圆屏正在重启")
             "ERR" -> finishOta(false, p.drop(2).joinToString(",").ifEmpty { "圆屏拒绝 OTA" })
         }
+    }
+
+    private fun applyDeviceInfo(msg: String, complete: Boolean) {
+        val info = msg.split(',')
+        if (!screenFirmwareComplete || complete) {
+            screenInfo = msg
+            screenBoard = info.getOrNull(1).orEmpty()
+            screenFirmware = info.getOrNull(2).orEmpty()
+            screenFirmwareComplete = complete
+        }
+        if (!screenOtaStatusKnown && complete) {
+            screenProtocol = info.getOrNull(3)?.toIntOrNull() ?: -1
+            screenOtaReady = info.getOrNull(5) == "1"
+        }
+        if (complete) handler.removeCallbacks(identityRetry)
     }
 
     private fun sendNextOtaPacket() {
@@ -875,12 +916,24 @@ object BleLink {
 
         override fun onMtuChanged(g: BluetoothGatt, newMtu: Int, st: Int) = onCurrent(g) {
             trace("mtu status=$st size=$newMtu")
+            val previousMtu = mtu
             if (st == BluetoothGatt.GATT_SUCCESS && newMtu >= 23) mtu = newMtu
             try {
                 g.setPreferredPhy(BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_LE_2M_MASK, BluetoothDevice.PHY_OPTION_NO_PREFERRED)
             } catch (_: Exception) {}
             if (session.phase() == Phase.MTU) onLinkReady(g)
             if (ready && verified) {
+                // Old firmware ignores #ID? and may have truncated its startup
+                // INFO before negotiation. One legacy re-query after MTU change
+                // preserves compatibility without periodic navigation traffic.
+                if (!otaInProgress && mtu != previousMtu) {
+                    sendIdentityQuery("#INFO?")
+                    sendIdentityQuery("#OTA?")
+                }
+                if (!screenFirmwareComplete) {
+                    handler.removeCallbacks(identityRetry)
+                    handler.postDelayed(identityRetry, 150L)
+                }
                 if (mtu >= TARGET_MTU) {
                     mtuRetryCount = 0
                     handler.removeCallbacks(mtuRetry)
@@ -967,6 +1020,7 @@ object BleLink {
         send("#INFO?")
         send("#OTA?")
         if (verified) resendAll()
+        if (verified) queryCompleteIdentity()
         if (verified) scheduleMtuRetry(g, 150L)
     }
 

@@ -39,6 +39,7 @@ volatile bool touchIrq = false;
 void IRAM_ATTR onTouchIrq() { touchIrq = true; }
 
 void touchInit() {
+  SharedWireGuard lock;
   touch.setPins(TP_RESET, TP_INT);
   touchOK = touch.begin(Wire, 0x5A, IIC_SDA, IIC_SCL);
   Serial.println(touchOK ? "touch ok" : "touch not found");
@@ -136,7 +137,11 @@ void touchPoll() {
     if (noticeKind == 2) noticeDirty = true;
   }
   int16_t x[5] = {0}, y[5] = {0};
-  uint8_t n = touch.getPoint(x, y, 1);
+  uint8_t n;
+  {
+    SharedWireGuard lock;
+    n = touch.getPoint(x, y, 1);
+  }
   if (n == 0 && (callOn || noticeKind == 2)) {
     if (noticeKind == 2 && touchHold > 0) noticeDirty = true;
     touchHoldAt = 0;

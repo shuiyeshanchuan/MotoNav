@@ -6,8 +6,8 @@
 #include "host/ble_att.h"
 #endif
 
-// All recorder state and I2C reads stay on the Arduino loop task. BLE callbacks
-// only enqueue controls in the existing RX queue; they never touch this state.
+// All recorder state stays on the Arduino loop task. The dedicated I2C sampler
+// only queues timestamped raw events; BLE callbacks only enqueue RX controls.
 static ContinuousImu::Recorder continuousImuRecorder;
 
 inline void initContinuousImuRecord() {
@@ -27,7 +27,11 @@ inline void initContinuousImuRecord() {
 }
 
 inline bool handleContinuousImuRecordControl(const uint8_t *data, int size) {
-  return continuousImuRecorder.control(data, size > 0 ? size_t(size) : 0, millis());
+  if (!data || size < 2 || data[0] != 0xD7 || data[1] != 0x43) return false;
+  if (size != ContinuousImu::CONTROL_SIZE || data[2] != 1 ||
+      ContinuousImu::crc16(data, 16) != ContinuousImu::read16(data + 16)) return true;
+  const uint32_t boundary = imuDiagnosticsControlBoundary();
+  return continuousImuRecorder.control(data, size_t(size), boundary);
 }
 
 inline void continuousImuRecordSample(uint32_t now, float ax, float ay, float az,
@@ -37,7 +41,10 @@ inline void continuousImuRecordSample(uint32_t now, float ax, float ay, float az
   continuousImuRecorder.sample(sample);
 }
 
-inline void continuousImuRecordReadError() { continuousImuRecorder.readError(); }
+inline void continuousImuRecordReadError(uint32_t count) { continuousImuRecorder.readError(count); }
+inline void continuousImuRecordAcquisitionOverflow(uint32_t count) {
+  continuousImuRecorder.acquisitionOverflow(count);
+}
 inline void continuousImuRecordDisconnected() { continuousImuRecorder.disconnected(); }
 
 inline void continuousImuRecordNotifyTick() {

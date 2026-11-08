@@ -1,6 +1,16 @@
 #pragma once
+#include "IdentityTransfer.h"
+#if defined(CONFIG_NIMBLE_ENABLED)
+#include "host/ble_att.h"
+#endif
+static IdentityTransfer identityTransfer;
+static uint32_t identityEpoch = 0;
 // 配对、地图确认、媒体等蓝牙通知。由 MotoNav.ino 按依赖顺序包含，仅编译一次。
 void sendPendingAck() {
+  if (identityEpoch != mediaConnectionEpoch) {
+    identityEpoch = mediaConnectionEpoch;
+    identityTransfer.reset();
+  }
   if (!txChar || !bleConnected || !bleAuthed) return;    // v6.5 没通过验证的手机什么都不发
   // v6.5 告诉手机“验证通过了”：连上后 0.3 / 1.5 / 4 秒各发一次（手机订阅通知可能比加密晚一点）
   static const uint16_t uAt[3] = {300, 1500, 4000};
@@ -60,6 +70,19 @@ void sendPendingAck() {
     txChar->setValue((uint8_t *)pendingDeviceInfo.c_str(), pendingDeviceInfo.length());
     txChar->notify();
     pendingDeviceInfo = "";
+  }
+  if (!otaActive) {
+    uint16_t identityMtu = 23;
+#if defined(CONFIG_NIMBLE_ENABLED)
+    if (bleConnHandle != 0xffff) identityMtu = ble_att_mtu(bleConnHandle);
+#endif
+    uint8_t identityPacket[IdentityTransfer::MAX_BODY + 8];
+    const size_t identityLength = identityTransfer.next(identityMtu, identityPacket, sizeof(identityPacket));
+    if (identityLength) {
+      txChar->setValue(identityPacket, identityLength);
+      txChar->notify();
+      identityTransfer.accepted();
+    }
   }
   if (pendingDeviceSelfTest.length()) {
     txChar->setValue((uint8_t *)pendingDeviceSelfTest.c_str(), pendingDeviceSelfTest.length());
