@@ -2,6 +2,7 @@ param(
     [Parameter(Mandatory)][string]$Tag,
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$ExpectedCommit,
     [switch]$RequireApp,
+    [switch]$RequireFeed,
     [string]$AssetDirectory = ''
 )
 
@@ -10,7 +11,10 @@ $ErrorActionPreference = 'Stop'
 $api = 'https://api.github.com/repos/shuiyeshanchuan/MotoNav'
 $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'MotoNav-Android'; 'Cache-Control' = 'no-cache' }
 function Read-PublicJson([string]$Url) {
-    Invoke-RestMethod -Uri $Url -Headers $headers -TimeoutSec 30
+    $request = @{ Uri = $Url; Headers = $headers; TimeoutSec = 30 }
+    $proxyUrl = if ($env:HTTPS_PROXY) { $env:HTTPS_PROXY } else { $env:HTTP_PROXY }
+    if ($proxyUrl) { $request.Proxy = $proxyUrl }
+    Invoke-RestMethod @request
 }
 $encodedTag = [Uri]::EscapeDataString($Tag)
 $release = Read-PublicJson "$api/releases/tags/$encodedTag"
@@ -42,5 +46,21 @@ if ($AssetDirectory) {
         if ($remote[0].digest -ne $expectedDigest) { throw "Remote SHA-256 mismatch: $($file.Name)" }
         Write-Host "PASS: asset size + SHA-256 $($file.Name)"
     }
+}
+if ($RequireFeed) {
+    # After committing/pushing updates/latest.json, make this the final release
+    # check. It catches an uploaded APK that the App's small catalog cannot see.
+    # Example: ./scripts/verify-github-release.ps1 -Tag ... -ExpectedCommit ... -RequireApp -RequireFeed
+    $feedUrl = 'https://raw.githubusercontent.com/shuiyeshanchuan/MotoNav/175c-ota-one-click/updates/latest.json'
+    $feed = Read-PublicJson $feedUrl
+    $apk = @($release.assets | Where-Object { $_.name -eq 'app-release.apk' -and $_.state -eq 'uploaded' })
+    if ($feed.schema -ne 1 -or $apk.Count -ne 1 -or $feed.app.releaseTag -cne $Tag -or
+        $feed.app.version -cne $Tag.Replace('motonav-', '') -or
+        $feed.app.apkUrl -cne $apk[0].browser_download_url -or $feed.app.apkApiUrl -cne $apk[0].url -or
+        [long]$feed.app.bytes -ne [long]$apk[0].size -or
+        ('sha256:' + $feed.app.sha256) -cne $apk[0].digest) {
+        throw "Public updates/latest.json does not point to the exact $Tag APK metadata. Run update-github-feed.ps1, commit/push the feed, then retry."
+    }
+    Write-Host "PASS: public update feed -> $Tag APK (URL/API URL/size/SHA-256)"
 }
 Write-Host "PASS: $Tag -> $ExpectedCommit; anonymous release position $position; $($release.html_url)"
